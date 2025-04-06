@@ -113,7 +113,15 @@ contract AggregatorBatches is IAggregatorBatches {
         } 
         
         // Request is either in the unprocessed pool or brand new
-        if (unprocessedRequestIds.contains(requestID)) {
+	commitments[requestID] = CommitmentRequest({
+                requestID: requestID,
+                payload: payload,
+                authenticator: authenticator
+        });
+	if (!unprocessedRequestIds.contains(requestID))
+	    unprocessedRequestIds.add(requestID);
+
+/*        if (unprocessedRequestIds.contains(requestID)) {
             // Request exists in the unprocessed pool, update it
             commitments[requestID] = CommitmentRequest({
                 requestID: requestID,
@@ -128,7 +136,7 @@ contract AggregatorBatches is IAggregatorBatches {
                 authenticator: authenticator
             });
             unprocessedRequestIds.add(requestID);
-        }
+        }*/
         
         emit RequestSubmitted(requestID, payload);
     }
@@ -138,7 +146,8 @@ contract AggregatorBatches is IAggregatorBatches {
      * @return batchNumber The number of the newly created batch
      */
     function createBatch() external override onlyTrustedAggregator returns (uint256) {
-        require(unprocessedRequestIds.length() > 0, "No unprocessed commitments to batch");
+//        require(unprocessedRequestIds.length() > 0, "No unprocessed commitments to batch");
+	if(unprocessedRequestIds.length() == 0)return 0;
         
         // Convert set to array for batch creation
         uint256[] memory allRequestIds = new uint256[](unprocessedRequestIds.length());
@@ -155,7 +164,8 @@ contract AggregatorBatches is IAggregatorBatches {
      * @return batchNumber The number of the newly created batch
      */
     function createBatchForRequests(uint256[] calldata requestIDs) external override onlyTrustedAggregator returns (uint256) {
-        require(requestIDs.length > 0, "No request IDs provided");
+//        require(requestIDs.length > 0, "No request IDs provided");
+	if(requestIDs.length == 0)return 0;
         
         // Filter only existing unprocessed requests
         uint256[] memory filteredRequestIDs = new uint256[](requestIDs.length);
@@ -188,10 +198,10 @@ contract AggregatorBatches is IAggregatorBatches {
         latestBatchNumber++;
         uint256 newBatchNumber = latestBatchNumber;
         
-        // Create array of requests for the batch
-        CommitmentRequest[] memory batchRequests = new CommitmentRequest[](requestIDs.length);
+        // Store only the request IDs in the batch
+        uint256[] memory batchRequestIds = new uint256[](requestIDs.length);
         for (uint256 i = 0; i < requestIDs.length; i++) {
-            batchRequests[i] = commitments[requestIDs[i]];
+            batchRequestIds[i] = requestIDs[i];
             
             // Mark this request as having been added to a batch
             // This prevents future modifications to the commitment
@@ -201,7 +211,7 @@ contract AggregatorBatches is IAggregatorBatches {
         // Store the new batch
         batches[newBatchNumber] = Batch({
             batchNumber: newBatchNumber,
-            requests: batchRequests,
+            requestIds: batchRequestIds,
             hashroot: bytes(""),
             processed: false
         });
@@ -229,6 +239,15 @@ contract AggregatorBatches is IAggregatorBatches {
     }
     
     /**
+     * @dev Returns a commitment by request ID
+     * @param requestID The ID of the commitment to retrieve
+     * @return request The commitment request data
+     */
+    function getCommitment(uint256 requestID) external view returns (CommitmentRequest memory request) {
+        return commitments[requestID];
+    }
+    
+    /**
      * @dev Returns the latest unprocessed batch
      * @return batchNumber The number of the latest unprocessed batch
      * @return requests Array of commitment requests in the batch
@@ -237,7 +256,15 @@ contract AggregatorBatches is IAggregatorBatches {
         // Find the latest unprocessed batch
         for (uint256 i = latestBatchNumber; i > latestProcessedBatchNumber; i--) {
             if (!batches[i].processed) {
-                return (i, batches[i].requests);
+                // Convert the request IDs to full commitment data
+                uint256[] storage requestIds = batches[i].requestIds;
+                CommitmentRequest[] memory batchRequests = new CommitmentRequest[](requestIds.length);
+                
+                for (uint256 j = 0; j < requestIds.length; j++) {
+                    batchRequests[j] = commitments[requestIds[j]];
+                }
+                
+                return (i, batchRequests);
             }
         }
         
@@ -257,7 +284,16 @@ contract AggregatorBatches is IAggregatorBatches {
         require(batchNumber > 0 && batchNumber <= latestBatchNumber, "Invalid batch number");
         
         Batch storage batch = batches[batchNumber];
-        return (batch.requests, batch.processed, batch.hashroot);
+        
+        // Convert the request IDs to full commitment data
+        uint256[] storage requestIds = batch.requestIds;
+        CommitmentRequest[] memory batchRequests = new CommitmentRequest[](requestIds.length);
+        
+        for (uint256 i = 0; i < requestIds.length; i++) {
+            batchRequests[i] = commitments[requestIds[i]];
+        }
+        
+        return (batchRequests, batch.processed, batch.hashroot);
     }
     
     /**

@@ -41,10 +41,12 @@ interface IAggregatorBatches {
 
     /**
      * @dev Struct for representing a batch of commitment requests
+     * Stores only the request IDs instead of the full commitment data
+     * to save gas and storage space
      */
     struct Batch {
         uint256 batchNumber;
-        CommitmentRequest[] requests;
+        uint256[] requestIds;
         bytes hashroot;
         bool processed;
     }
@@ -106,6 +108,13 @@ interface IAggregatorBatches {
      * @return hashroot The SMT hashroot of the batch
      */
     function getBatchHashroot(uint256 batchNumber) external view returns (bytes memory hashroot);
+    
+    /**
+     * @dev Returns a commitment request by its ID
+     * @param requestID The ID of the commitment request to retrieve
+     * @return request The commitment request data
+     */
+    function getCommitment(uint256 requestID) external view returns (CommitmentRequest memory request);
 
     /**
      * @dev Submits an updated hashroot after processing a batch.
