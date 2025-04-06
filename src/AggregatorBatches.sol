@@ -72,29 +72,65 @@ contract AggregatorBatches is IAggregatorBatches {
     }
     
     /**
+     * @dev Track all request IDs that have ever been in a batch
+     */
+    mapping(uint256 => bool) private requestAddedToBatch;
+    
+    /**
      * @dev Submit commitment into the pool of unprocessed commitment requests
      * @param requestID requestID of the commitment
      * @param payload The payload value
      * @param authenticator A byte sequence representing the authenticator
+     * 
+     * Rules:
+     * 1. If requestID exists in a batch already:
+     *    a. If payload/authenticator match exactly → Skip
+     *    b. If payload/authenticator differ → Revert
+     * 2. If requestID is in unprocessed pool (never in a batch):
+     *    a. Update it with new payload/authenticator
+     * 3. If requestID is new:
+     *    a. Add it to the unprocessed pool
      */
     function submitCommitment(uint256 requestID, bytes calldata payload, bytes calldata authenticator) external override onlyTrustedAggregator {
-        // Check if this requestID already exists in commitments
-        bool alreadyExists = unprocessedRequestIds.contains(requestID);
-        bool needToAdd = !alreadyExists;
+        // If this request has been in a batch before
+        if (requestAddedToBatch[requestID]) {
+            // Get the stored commitment data
+            CommitmentRequest storage existingCommitment = commitments[requestID];
+            
+            // Check if payload and authenticator match exactly
+            bytes32 existingPayloadHash = keccak256(existingCommitment.payload);
+            bytes32 newPayloadHash = keccak256(payload);
+            bytes32 existingAuthHash = keccak256(existingCommitment.authenticator);
+            bytes32 newAuthHash = keccak256(authenticator);
+            
+            // If either payload or authenticator differ, revert
+            if (existingPayloadHash != newPayloadHash || existingAuthHash != newAuthHash) {
+                revert("Cannot modify a commitment that was previously in a batch");
+            }
+            
+            // If they match exactly, skip (don't add back to the pool)
+            return;
+        } 
         
-        if (needToAdd) {
-            // Add to commitments storage
+        // Request is either in the unprocessed pool or brand new
+        if (unprocessedRequestIds.contains(requestID)) {
+            // Request exists in the unprocessed pool, update it
             commitments[requestID] = CommitmentRequest({
                 requestID: requestID,
                 payload: payload,
                 authenticator: authenticator
             });
-            
-            // Add to unprocessed set
+        } else {
+            // Brand new request, add it to commitments and unprocessed pool
+            commitments[requestID] = CommitmentRequest({
+                requestID: requestID,
+                payload: payload,
+                authenticator: authenticator
+            });
             unprocessedRequestIds.add(requestID);
-            
-            emit RequestSubmitted(requestID, payload);
         }
+        
+        emit RequestSubmitted(requestID, payload);
     }
     
     /**
@@ -156,6 +192,10 @@ contract AggregatorBatches is IAggregatorBatches {
         CommitmentRequest[] memory batchRequests = new CommitmentRequest[](requestIDs.length);
         for (uint256 i = 0; i < requestIDs.length; i++) {
             batchRequests[i] = commitments[requestIDs[i]];
+            
+            // Mark this request as having been added to a batch
+            // This prevents future modifications to the commitment
+            requestAddedToBatch[requestIDs[i]] = true;
         }
         
         // Store the new batch

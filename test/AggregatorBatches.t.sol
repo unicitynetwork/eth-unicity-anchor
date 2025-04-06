@@ -123,6 +123,60 @@ contract AggregatorBatchesTest is Test {
         assertEq(requests2[0].requestID, 3, "Second batch should contain request 3");
     }
     
+    function testCommitmentModificationRules() public {
+        // Submit a new commitment
+        uint256 testId = 500;
+        bytes memory originalPayload = bytes("original payload");
+        bytes memory originalAuth = bytes("original auth");
+        
+        vm.prank(trustedAggregators[0]);
+        aggregator.submitCommitment(testId, originalPayload, originalAuth);
+        
+        // Commitment should be in the unprocessed pool
+        bool isUnprocessed = aggregator.isRequestUnprocessed(testId);
+        assertTrue(isUnprocessed, "Request should be in unprocessed pool");
+        
+        // We can modify the commitment while it's in the unprocessed pool
+        bytes memory updatedPayload = bytes("updated payload");
+        bytes memory updatedAuth = bytes("updated auth");
+        
+        vm.prank(trustedAggregators[0]);
+        aggregator.submitCommitment(testId, updatedPayload, updatedAuth);
+        
+        // Create a batch with this commitment
+        uint256[] memory batchRequestIds = new uint256[](1);
+        batchRequestIds[0] = testId;
+        
+        vm.prank(trustedAggregators[0]);
+        uint256 batchNumber = aggregator.createBatchForRequests(batchRequestIds);
+        
+        // Request should no longer be in the unprocessed pool
+        isUnprocessed = aggregator.isRequestUnprocessed(testId);
+        assertFalse(isUnprocessed, "Request should not be in unprocessed pool after batching");
+        
+        // Trying to resubmit the exact same commitment should be ignored (no revert)
+        vm.prank(trustedAggregators[0]);
+        aggregator.submitCommitment(testId, updatedPayload, updatedAuth);
+        
+        // Commitment should still not be in the unprocessed pool
+        isUnprocessed = aggregator.isRequestUnprocessed(testId);
+        assertFalse(isUnprocessed, "Request should not be added back to unprocessed pool");
+        
+        // Trying to modify a commitment that was in a batch should revert
+        bytes memory differentPayload = bytes("different payload");
+        
+        vm.prank(trustedAggregators[0]);
+        vm.expectRevert("Cannot modify a commitment that was previously in a batch");
+        aggregator.submitCommitment(testId, differentPayload, updatedAuth);
+        
+        // Same test with different authenticator
+        bytes memory differentAuth = bytes("different auth");
+        
+        vm.prank(trustedAggregators[0]);
+        vm.expectRevert("Cannot modify a commitment that was previously in a batch");
+        aggregator.submitCommitment(testId, updatedPayload, differentAuth);
+    }
+    
     function testUnprocessedPoolManagement() public {
         // Create a few commitments
         vm.startPrank(trustedAggregators[0]);
