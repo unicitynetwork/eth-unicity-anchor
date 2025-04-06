@@ -122,4 +122,69 @@ contract AggregatorBatchesTest is Test {
         assertEq(requests1[1].requestID, 2, "First batch should contain request 2");
         assertEq(requests2[0].requestID, 3, "Second batch should contain request 3");
     }
+    
+    function testUnprocessedPoolManagement() public {
+        // Create a few commitments
+        vm.startPrank(trustedAggregators[0]);
+        aggregator.submitCommitment(101, bytes("payload 101"), bytes("auth 101"));
+        aggregator.submitCommitment(102, bytes("payload 102"), bytes("auth 102"));
+        aggregator.submitCommitment(103, bytes("payload 103"), bytes("auth 103"));
+        aggregator.submitCommitment(104, bytes("payload 104"), bytes("auth 104"));
+        aggregator.submitCommitment(105, bytes("payload 105"), bytes("auth 105"));
+        vm.stopPrank();
+        
+        // Test unprocessed request count
+        uint256 count = aggregator.getUnprocessedRequestCount();
+        assertEq(count, 5, "Should have 5 unprocessed requests");
+        
+        // Test accessing unprocessed requests by index
+        uint256 requestId = aggregator.getUnprocessedRequestAtIndex(0);
+        assertTrue(requestId >= 101 && requestId <= 105, "Should return a valid request ID");
+        
+        // Test checking if a request is unprocessed
+        bool isUnprocessed = aggregator.isRequestUnprocessed(101);
+        assertTrue(isUnprocessed, "Request 101 should be unprocessed");
+        
+        isUnprocessed = aggregator.isRequestUnprocessed(999);
+        assertFalse(isUnprocessed, "Request 999 should not exist");
+        
+        // Test getting all unprocessed requests
+        uint256[] memory allRequests = aggregator.getAllUnprocessedRequests();
+        assertEq(allRequests.length, 5, "Should return all 5 unprocessed requests");
+        
+        // Create a batch with some requests
+        uint256[] memory batchRequestIds = new uint256[](3);
+        batchRequestIds[0] = 101;
+        batchRequestIds[1] = 103;
+        batchRequestIds[2] = 105;
+        
+        vm.prank(trustedAggregators[0]);
+        aggregator.createBatchForRequests(batchRequestIds);
+        
+        // Check that the used requests are no longer unprocessed
+        count = aggregator.getUnprocessedRequestCount();
+        assertEq(count, 2, "Should have 2 unprocessed requests remaining");
+        
+        isUnprocessed = aggregator.isRequestUnprocessed(101);
+        assertFalse(isUnprocessed, "Request 101 should be processed now");
+        
+        isUnprocessed = aggregator.isRequestUnprocessed(102);
+        assertTrue(isUnprocessed, "Request 102 should still be unprocessed");
+        
+        // Get all remaining unprocessed requests
+        allRequests = aggregator.getAllUnprocessedRequests();
+        assertEq(allRequests.length, 2, "Should return 2 unprocessed requests");
+        
+        // Check the specific remaining request IDs
+        bool found102 = false;
+        bool found104 = false;
+        
+        for (uint256 i = 0; i < allRequests.length; i++) {
+            if (allRequests[i] == 102) found102 = true;
+            if (allRequests[i] == 104) found104 = true;
+        }
+        
+        assertTrue(found102, "Request 102 should be in the unprocessed pool");
+        assertTrue(found104, "Request 104 should be in the unprocessed pool");
+    }
 }

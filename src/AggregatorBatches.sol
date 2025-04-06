@@ -2,14 +2,20 @@
 pragma solidity ^0.8.13;
 
 import "./IAggregatorBatches.sol";
+import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
 /**
  * Unicity Aggregator Batches Implementation
  */
 contract AggregatorBatches is IAggregatorBatches {
-    // Storage for unprocessed commitment requests (not yet in a batch)
-    mapping(uint256 => CommitmentRequest) private unprocessedCommitments;
-    uint256[] private unprocessedCommitmentIds;
+    // Use OpenZeppelin's EnumerableSet for efficient set operations
+    using EnumerableSet for EnumerableSet.UintSet;
+    
+    // Storage for commitment requests (all commitments, both processed and unprocessed)
+    mapping(uint256 => CommitmentRequest) private commitments;
+    
+    // Set of unprocessed commitment request IDs (not yet in a batch)
+    EnumerableSet.UintSet private unprocessedRequestIds;
     
     // Storage for batches
     mapping(uint256 => Batch) private batches;
@@ -72,23 +78,20 @@ contract AggregatorBatches is IAggregatorBatches {
      * @param authenticator A byte sequence representing the authenticator
      */
     function submitCommitment(uint256 requestID, bytes calldata payload, bytes calldata authenticator) external override onlyTrustedAggregator {
-        // Check if this requestID already exists in unprocessed commitments
-        bool exists = false;
-        for (uint256 i = 0; i < unprocessedCommitmentIds.length; i++) {
-            if (unprocessedCommitmentIds[i] == requestID) {
-                exists = true;
-                break;
-            }
-        }
+        // Check if this requestID already exists in commitments
+        bool alreadyExists = unprocessedRequestIds.contains(requestID);
+        bool needToAdd = !alreadyExists;
         
-        if (!exists) {
-            // Add to unprocessed commitments if not already there
-            unprocessedCommitments[requestID] = CommitmentRequest({
+        if (needToAdd) {
+            // Add to commitments storage
+            commitments[requestID] = CommitmentRequest({
                 requestID: requestID,
                 payload: payload,
                 authenticator: authenticator
             });
-            unprocessedCommitmentIds.push(requestID);
+            
+            // Add to unprocessed set
+            unprocessedRequestIds.add(requestID);
             
             emit RequestSubmitted(requestID, payload);
         }
@@ -99,9 +102,15 @@ contract AggregatorBatches is IAggregatorBatches {
      * @return batchNumber The number of the newly created batch
      */
     function createBatch() external override onlyTrustedAggregator returns (uint256) {
-        require(unprocessedCommitmentIds.length > 0, "No unprocessed commitments to batch");
+        require(unprocessedRequestIds.length() > 0, "No unprocessed commitments to batch");
         
-        return _createBatchInternal(unprocessedCommitmentIds);
+        // Convert set to array for batch creation
+        uint256[] memory allRequestIds = new uint256[](unprocessedRequestIds.length());
+        for (uint256 i = 0; i < unprocessedRequestIds.length(); i++) {
+            allRequestIds[i] = unprocessedRequestIds.at(i);
+        }
+        
+        return _createBatchInternal(allRequestIds);
     }
     
     /**
@@ -112,19 +121,25 @@ contract AggregatorBatches is IAggregatorBatches {
     function createBatchForRequests(uint256[] calldata requestIDs) external override onlyTrustedAggregator returns (uint256) {
         require(requestIDs.length > 0, "No request IDs provided");
         
-        // Validate all requestIDs exist in unprocessed commitments
+        // Filter only existing unprocessed requests
+        uint256[] memory filteredRequestIDs = new uint256[](requestIDs.length);
+        uint256 filteredCount = 0;
+        
         for (uint256 i = 0; i < requestIDs.length; i++) {
-            bool found = false;
-            for (uint256 j = 0; j < unprocessedCommitmentIds.length; j++) {
-                if (unprocessedCommitmentIds[j] == requestIDs[i]) {
-                    found = true;
-                    break;
-                }
+            if (unprocessedRequestIds.contains(requestIDs[i])) {
+                filteredRequestIDs[filteredCount] = requestIDs[i];
+                filteredCount++;
             }
-            require(found, "Request ID not found in unprocessed commitments");
         }
         
-        return _createBatchInternal(requestIDs);
+        // Create a properly sized array with only valid IDs
+        uint256[] memory validRequestIDs = new uint256[](filteredCount);
+        for (uint256 i = 0; i < filteredCount; i++) {
+            validRequestIDs[i] = filteredRequestIDs[i];
+        }
+        
+        require(validRequestIDs.length > 0, "No valid unprocessed request IDs provided");
+        return _createBatchInternal(validRequestIDs);
     }
     
     /**
@@ -140,7 +155,7 @@ contract AggregatorBatches is IAggregatorBatches {
         // Create array of requests for the batch
         CommitmentRequest[] memory batchRequests = new CommitmentRequest[](requestIDs.length);
         for (uint256 i = 0; i < requestIDs.length; i++) {
-            batchRequests[i] = unprocessedCommitments[requestIDs[i]];
+            batchRequests[i] = commitments[requestIDs[i]];
         }
         
         // Store the new batch
@@ -164,37 +179,12 @@ contract AggregatorBatches is IAggregatorBatches {
      * @param processedIds Array of request IDs that have been processed
      */
     function _removeProcessedCommitments(uint256[] memory processedIds) private {
-        // We can't create a mapping dynamically, so use a different approach
-        // Filter unprocessed IDs by checking each against the processed IDs
-        uint256[] memory newUnprocessedIds = new uint256[](unprocessedCommitmentIds.length);
-        uint256 newIndex = 0;
-        
-        for (uint256 i = 0; i < unprocessedCommitmentIds.length; i++) {
-            bool isProcessed = false;
-            
-            for (uint256 j = 0; j < processedIds.length; j++) {
-                if (unprocessedCommitmentIds[i] == processedIds[j]) {
-                    isProcessed = true;
-                    break;
-                }
+        // Remove each processed ID from the unprocessed set
+        for (uint256 i = 0; i < processedIds.length; i++) {
+            // Only remove if it exists in the set
+            if (unprocessedRequestIds.contains(processedIds[i])) {
+                unprocessedRequestIds.remove(processedIds[i]);
             }
-            
-            if (!isProcessed) {
-                newUnprocessedIds[newIndex] = unprocessedCommitmentIds[i];
-                newIndex++;
-            }
-        }
-        
-        // Create final array of the correct size
-        uint256[] memory finalUnprocessedIds = new uint256[](newIndex);
-        for (uint256 i = 0; i < newIndex; i++) {
-            finalUnprocessedIds[i] = newUnprocessedIds[i];
-        }
-        
-        // Update storage
-        delete unprocessedCommitmentIds; // Clear existing array
-        for (uint256 i = 0; i < finalUnprocessedIds.length; i++) {
-            unprocessedCommitmentIds.push(finalUnprocessedIds[i]);
         }
     }
     
@@ -255,6 +245,48 @@ contract AggregatorBatches is IAggregatorBatches {
         require(batchNumber > 0 && batchNumber <= latestBatchNumber, "Invalid batch number");
         
         return batches[batchNumber].hashroot;
+    }
+    
+    /**
+     * @dev Returns the count of unprocessed request IDs in the pool
+     * @return count The number of unprocessed request IDs
+     */
+    function getUnprocessedRequestCount() external view returns (uint256) {
+        return unprocessedRequestIds.length();
+    }
+    
+    /**
+     * @dev Returns a specific unprocessed request ID by its index
+     * @param index The index in the unprocessed request IDs set
+     * @return requestID The request ID at the specified index
+     */
+    function getUnprocessedRequestAtIndex(uint256 index) external view returns (uint256) {
+        require(index < unprocessedRequestIds.length(), "Index out of bounds");
+        return unprocessedRequestIds.at(index);
+    }
+    
+    /**
+     * @dev Checks if a request ID is in the unprocessed pool
+     * @param requestID The request ID to check
+     * @return isUnprocessed True if the request ID is unprocessed, false otherwise
+     */
+    function isRequestUnprocessed(uint256 requestID) external view returns (bool) {
+        return unprocessedRequestIds.contains(requestID);
+    }
+    
+    /**
+     * @dev Returns all unprocessed request IDs
+     * @return requestIDs Array of all unprocessed request IDs
+     */
+    function getAllUnprocessedRequests() external view returns (uint256[] memory) {
+        uint256 length = unprocessedRequestIds.length();
+        uint256[] memory result = new uint256[](length);
+        
+        for (uint256 i = 0; i < length; i++) {
+            result[i] = unprocessedRequestIds.at(i);
+        }
+        
+        return result;
     }
     
     /**
