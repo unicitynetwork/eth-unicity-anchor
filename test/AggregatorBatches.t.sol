@@ -91,6 +91,127 @@ contract AggregatorBatchesTest is Test {
         assertEq(latestProcessed, batchNumber, "Latest processed batch should be updated");
     }
     
+    function testHashrootVoting() public {
+        // Create a batch
+        vm.prank(trustedAggregators[0]);
+        aggregator.submitCommitment(50, bytes("payload 50"), bytes("auth 50"));
+        
+        vm.prank(trustedAggregators[0]);
+        uint256 batchNumber = aggregator.createBatch();
+        
+        // Aggregators submit different hashroots
+        bytes memory hashroot1 = bytes("hashroot 1");
+        bytes memory hashroot2 = bytes("hashroot 2");
+        
+        // First aggregator votes for hashroot1
+        vm.prank(trustedAggregators[0]);
+        aggregator.submitHashroot(batchNumber, hashroot1);
+        
+        // Check vote count for hashroot1
+        uint256 votes = aggregator.getHashrootVoteCount(batchNumber, hashroot1);
+        assertEq(votes, 1, "Hashroot1 should have 1 vote");
+        
+        // Second aggregator votes for hashroot2
+        vm.prank(trustedAggregators[1]);
+        aggregator.submitHashroot(batchNumber, hashroot2);
+        
+        // Check vote counts
+        votes = aggregator.getHashrootVoteCount(batchNumber, hashroot1);
+        assertEq(votes, 1, "Hashroot1 should still have 1 vote");
+        votes = aggregator.getHashrootVoteCount(batchNumber, hashroot2);
+        assertEq(votes, 1, "Hashroot2 should have 1 vote");
+        
+        // Check number of submitted hashroots
+        uint256 hashrootCount = aggregator.getSubmittedHashrootCount(batchNumber);
+        assertEq(hashrootCount, 2, "Should have 2 different hashroots submitted");
+        
+        // Try to have aggregator0 vote for hashroot2 when they already voted for hashroot1
+        vm.expectRevert("Aggregator already voted for a different hashroot for this batch");
+        vm.prank(trustedAggregators[0]);
+        aggregator.submitHashroot(batchNumber, hashroot2);
+        
+        // Third aggregator votes for hashroot1 - now hashroot1 has 2 votes (enough to process)
+        vm.prank(trustedAggregators[2]);
+        aggregator.submitHashroot(batchNumber, hashroot1);
+        
+        // Check batch is processed with hashroot1
+        (,bool processed, bytes memory storedHashroot) = aggregator.getBatch(batchNumber);
+        assertEq(processed, true, "Batch should be processed");
+        assertEq(string(storedHashroot), string(hashroot1), "Batch should use hashroot1");
+    }
+    
+    function testSequentialBatchProcessing() public {
+        // Create 3 batches
+        vm.startPrank(trustedAggregators[0]);
+        
+        // First batch
+        aggregator.submitCommitment(10, bytes("payload 10"), bytes("auth 10"));
+        uint256 batch1 = aggregator.createBatch();
+        
+        // Second batch
+        aggregator.submitCommitment(20, bytes("payload 20"), bytes("auth 20"));
+        uint256 batch2 = aggregator.createBatch();
+        
+        // Third batch
+        aggregator.submitCommitment(30, bytes("payload 30"), bytes("auth 30"));
+        uint256 batch3 = aggregator.createBatch();
+        vm.stopPrank();
+        
+        // Verify batches were created
+        assertEq(batch1, 1, "First batch should be 1");
+        assertEq(batch2, 2, "Second batch should be 2");
+        assertEq(batch3, 3, "Third batch should be 3");
+        
+        // Try to process the second batch before the first one - should revert
+        bytes memory hashroot = bytes("test hashroot");
+        
+        vm.prank(trustedAggregators[0]);
+        vm.expectRevert("Batches must be processed in sequence; can't skip batches");
+        aggregator.submitHashroot(2, hashroot);
+        
+        // Try to process the third batch before the others - should revert
+        vm.prank(trustedAggregators[0]);
+        vm.expectRevert("Batches must be processed in sequence; can't skip batches");
+        aggregator.submitHashroot(3, hashroot);
+        
+        // Process batches in the correct sequence
+        // Process batch 1
+        vm.startPrank(trustedAggregators[0]);
+        aggregator.submitHashroot(1, hashroot);
+        vm.stopPrank();
+        
+        vm.prank(trustedAggregators[1]);
+        aggregator.submitHashroot(1, hashroot);
+        
+        // Verify batch 1 is processed
+        uint256 latestProcessed = aggregator.getLatestProcessedBatchNumber();
+        assertEq(latestProcessed, 1, "Batch 1 should be processed");
+        
+        // Now we can process batch 2
+        vm.startPrank(trustedAggregators[0]);
+        aggregator.submitHashroot(2, hashroot);
+        vm.stopPrank();
+        
+        vm.prank(trustedAggregators[1]);
+        aggregator.submitHashroot(2, hashroot);
+        
+        // Verify batch 2 is processed
+        latestProcessed = aggregator.getLatestProcessedBatchNumber();
+        assertEq(latestProcessed, 2, "Batch 2 should be processed");
+        
+        // Now we can process batch 3
+        vm.startPrank(trustedAggregators[0]);
+        aggregator.submitHashroot(3, hashroot);
+        vm.stopPrank();
+        
+        vm.prank(trustedAggregators[1]);
+        aggregator.submitHashroot(3, hashroot);
+        
+        // Verify batch 3 is processed
+        latestProcessed = aggregator.getLatestProcessedBatchNumber();
+        assertEq(latestProcessed, 3, "Batch 3 should be processed");
+    }
+    
     function testMultipleBatches() public {
         // Create 3 commitments
         vm.startPrank(trustedAggregators[0]);

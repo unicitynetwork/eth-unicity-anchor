@@ -26,6 +26,12 @@ contract AggregatorBatches is IAggregatorBatches {
     mapping(address => bool) private trustedAggregators;
     mapping(uint256 => mapping(bytes => mapping(address => bool))) private batchHashrootVotes;
     mapping(uint256 => mapping(bytes => uint256)) private batchHashrootVoteCount;
+    
+    // Track all submitted hashroots for each batch
+    // Store the actual bytes hashroots, not just the hash
+    mapping(uint256 => bytes[]) private batchSubmittedHashroots;
+    mapping(uint256 => mapping(bytes32 => bool)) private batchHashrootExists;
+    
     uint256 private requiredAggregatorVotes;
     uint256 private totalAggregators;
     
@@ -199,9 +205,9 @@ contract AggregatorBatches is IAggregatorBatches {
         uint256 newBatchNumber = latestBatchNumber;
         
         // Store only the request IDs in the batch
-        uint256[] memory batchRequestIds = new uint256[](requestIDs.length);
+//        uint256[] memory batchRequestIds = new uint256[](requestIDs.length);
         for (uint256 i = 0; i < requestIDs.length; i++) {
-            batchRequestIds[i] = requestIDs[i];
+//            batchRequestIds[i] = requestIDs[i];
             
             // Mark this request as having been added to a batch
             // This prevents future modifications to the commitment
@@ -211,7 +217,8 @@ contract AggregatorBatches is IAggregatorBatches {
         // Store the new batch
         batches[newBatchNumber] = Batch({
             batchNumber: newBatchNumber,
-            requestIds: batchRequestIds,
+//            requestIds: batchRequestIds,
+            requestIds: requestIDs,
             hashroot: bytes(""),
             processed: false
         });
@@ -267,7 +274,7 @@ contract AggregatorBatches is IAggregatorBatches {
                 return (i, batchRequests);
             }
         }
-        
+
         // Return empty if no unprocessed batch found
         CommitmentRequest[] memory emptyRequests = new CommitmentRequest[](0);
         return (0, emptyRequests);
@@ -366,36 +373,112 @@ contract AggregatorBatches is IAggregatorBatches {
     }
     
     /**
+     * @dev Returns all submitted hashroots for a specific batch (internal function)
+     * @param batchNumber The batch number to query
+     * @return hashroots Array of submitted hashroots for the batch
+     */
+    function getSubmittedHashrootsForBatch(uint256 batchNumber) internal view returns (bytes[] memory) {
+        return batchSubmittedHashroots[batchNumber];
+    }
+    
+    /**
+     * @dev Returns all submitted hashroots for a specific batch (public function)
+     * @param batchNumber The batch number to query
+     * @return count The number of unique hashroots submitted for the batch
+     */
+    function getSubmittedHashrootCount(uint256 batchNumber) external view returns (uint256 count) {
+        return batchSubmittedHashroots[batchNumber].length;
+    }
+    
+    /**
+     * @dev Returns the number of votes for a specific hashroot in a batch
+     * @param batchNumber The batch number to query
+     * @param hashroot The hashroot to check
+     * @return voteCount The number of votes for this hashroot
+     */
+    function getHashrootVoteCount(uint256 batchNumber, bytes calldata hashroot) external view returns (uint256 voteCount) {
+        return batchHashrootVoteCount[batchNumber][hashroot];
+    }
+    
+    /**
      * @dev Submits an updated hashroot after processing a batch
      * @param batchNumber The number of the batch that was processed
      * @param hashroot The new SMT hashroot after processing the batch
      * @return success Boolean indicating if the submission was successful
+     * 
+     * Rules:
+     * 1. Batches must be processed sequentially; can't skip any batch
+     * 2. Each aggregator can vote only once per (batch, hashroot) combination
+     * 3. Batch is processed when requiredAggregatorVotes is reached for the same hashroot
      */
     function submitHashroot(uint256 batchNumber, bytes calldata hashroot) external override onlyTrustedAggregator returns (bool success) {
+        // Basic validation
         require(batchNumber > 0 && batchNumber <= latestBatchNumber, "Invalid batch number");
         require(!batches[batchNumber].processed, "Batch already processed");
         
-        // Check if this aggregator has already voted
-        if (!batchHashrootVotes[batchNumber][hashroot][msg.sender]) {
-            // Record the vote
-            batchHashrootVotes[batchNumber][hashroot][msg.sender] = true;
-            batchHashrootVoteCount[batchNumber][hashroot]++;
+        // Ensure batch processing happens sequentially
+        // The batch to be processed must be exactly the next one after the last processed batch
+        require(batchNumber == latestProcessedBatchNumber + 1, 
+            "Batches must be processed in sequence; can't skip batches");
+        
+        // Check if this aggregator has already voted for this specific hashroot
+        bool alreadyVotedForThisHashroot = batchHashrootVotes[batchNumber][hashroot][msg.sender];
+        
+        // If already voted for this specific hashroot, no need to proceed
+        if (alreadyVotedForThisHashroot) {
+            return true;
+        }
+        
+        // Check if the aggregator has already voted for ANY other hashroot for this batch
+        bytes[] memory allSubmittedHashroots = getSubmittedHashrootsForBatch(batchNumber);
+        
+        // Track if we found a different hashroot vote for this aggregator
+        bool hasVotedForDifferentHashroot = false;
+        
+        // Check each submitted hashroot to see if this aggregator has voted for it
+        for (uint256 i = 0; i < allSubmittedHashroots.length; i++) {
+            bytes memory submittedHashroot = allSubmittedHashroots[i];
             
-            emit HashrootSubmitted(batchNumber, msg.sender, hashroot);
-            
-            // Check if we have enough votes for this hashroot
-            if (batchHashrootVoteCount[batchNumber][hashroot] >= requiredAggregatorVotes) {
-                // Mark batch as processed and update hashroot
-                batches[batchNumber].processed = true;
-                batches[batchNumber].hashroot = hashroot;
-                
-                // Update latest processed batch number if needed
-                if (batchNumber > latestProcessedBatchNumber) {
-                    latestProcessedBatchNumber = batchNumber;
-                }
-                
-                emit BatchProcessed(batchNumber, hashroot);
+            // Skip if this is the current hashroot we're voting on
+            if (keccak256(submittedHashroot) == keccak256(hashroot)) {
+                continue;
             }
+            
+            // Check if the aggregator voted for this different hashroot
+            if (batchHashrootVotes[batchNumber][submittedHashroot][msg.sender]) {
+                hasVotedForDifferentHashroot = true;
+                break;
+            }
+        }
+        
+        // If aggregator already voted for a different hashroot for this batch, revert
+        if (hasVotedForDifferentHashroot) {
+            revert("Aggregator already voted for a different hashroot for this batch");
+        }
+        
+        // Record the vote
+        batchHashrootVotes[batchNumber][hashroot][msg.sender] = true;
+        batchHashrootVoteCount[batchNumber][hashroot]++;
+        
+        // Track this hashroot if it's new
+        bytes32 hashrootHash = keccak256(hashroot);
+        if (!batchHashrootExists[batchNumber][hashrootHash]) {
+            batchSubmittedHashroots[batchNumber].push(hashroot);
+            batchHashrootExists[batchNumber][hashrootHash] = true;
+        }
+        
+        emit HashrootSubmitted(batchNumber, msg.sender, hashroot);
+        
+        // Check if we have enough votes for this hashroot to consider the batch processed
+        if (batchHashrootVoteCount[batchNumber][hashroot] >= requiredAggregatorVotes) {
+            // Mark batch as processed and update hashroot
+            batches[batchNumber].processed = true;
+            batches[batchNumber].hashroot = hashroot;
+            
+            // Update latest processed batch number
+            latestProcessedBatchNumber = batchNumber;
+            
+            emit BatchProcessed(batchNumber, hashroot);
         }
         
         return true;
