@@ -17,10 +17,10 @@ contract AggregatorBatchesScript is Script {
         trustedAggregators[0] = address(0x1111111111111111111111111111111111111111);
         trustedAggregators[1] = address(0x2222222222222222222222222222222222222222);
         trustedAggregators[2] = address(0x3333333333333333333333333333333333333333);
-        
+
         // Deploy with 2 out of 3 required votes
         AggregatorBatches aggregator = new AggregatorBatches(trustedAggregators, 2);
-        
+
         console.log("AggregatorBatches deployed to:", address(aggregator));
 
         vm.stopBroadcast();

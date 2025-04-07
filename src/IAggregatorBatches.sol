@@ -1,11 +1,10 @@
-
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
 
 /**
  * Unicity Aggregator Batches Interface
- * 
- * Manages global storage of commitment requests organized into sequence of batches, manages the queue of batches for the processing by the SMT aggregators. 
+ *
+ * Manages global storage of commitment requests organized into sequence of batches, manages the queue of batches for the processing by the SMT aggregators.
  * SMT aggregators are external trusted servicies that aggregate commitment requests represented as leafs into the SMT data structure
  *
  * Mode of operation:
@@ -27,8 +26,8 @@ pragma solidity ^0.8.13;
  *  - requestID - uint256 integer representing unique request id
  *  - payload - a byte sequence value
  *  - authenticator - a byte sequence arbitrary value
- **/
-
+ *
+ */
 interface IAggregatorBatches {
     /**
      * @dev Struct for representing a commitment request
@@ -56,7 +55,7 @@ interface IAggregatorBatches {
      * @param requestID requestID of the commitment
      * @param payload The payload value (ex, hash of the respective transaction)
      * @param authenticator A byte sequence representing the authenticator
-     * Reverts if the operation was not successful. You cannot submit commitments with the same requestId but different payloads and authenticators. 
+     * Reverts if the operation was not successful. You cannot submit commitments with the same requestId but different payloads and authenticators.
      *   However, exactly same request can be submitted multiple times, but added just once into the global commitment storage.
      */
     function submitCommitment(uint256 requestID, bytes calldata payload, bytes calldata authenticator) external;
@@ -79,7 +78,10 @@ interface IAggregatorBatches {
      * @return batchNumber The number of the latest unprocessed batch
      * @return requests Array of commitment requests in the batch
      */
-    function getLatestUnprocessedBatch() external view returns (uint256 batchNumber, CommitmentRequest[] memory requests);
+    function getLatestUnprocessedBatch()
+        external
+        view
+        returns (uint256 batchNumber, CommitmentRequest[] memory requests);
 
     /**
      * @dev Returns a batch by its number
@@ -88,7 +90,10 @@ interface IAggregatorBatches {
      * @return processed Boolean indicating if the batch has been processed
      * @return hashroot The SMT hashroot of the batch (if processed)
      */
-    function getBatch(uint256 batchNumber) external view returns (CommitmentRequest[] memory requests, bool processed, bytes memory hashroot);
+    function getBatch(uint256 batchNumber)
+        external
+        view
+        returns (CommitmentRequest[] memory requests, bool processed, bytes memory hashroot);
 
     /**
      * @dev Returns the number of the latest processed batch
@@ -108,7 +113,7 @@ interface IAggregatorBatches {
      * @return hashroot The SMT hashroot of the batch
      */
     function getBatchHashroot(uint256 batchNumber) external view returns (bytes memory hashroot);
-    
+
     /**
      * @dev Returns a commitment request by its ID
      * @param requestID The ID of the commitment request to retrieve
@@ -144,5 +149,4 @@ interface IAggregatorBatches {
      * @dev Event emitted when an aggregator submits a hashroot
      */
     event HashrootSubmitted(uint256 indexed batchNumber, address indexed aggregator, bytes hashroot);
-
 }
