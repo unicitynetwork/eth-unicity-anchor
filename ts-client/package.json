@@ -8,6 +8,7 @@
     "build": "tsc",
     "test": "jest",
     "test:unit": "jest tests/*.test.ts",
+    "test:utils": "jest tests/utils.test.ts",
     "test:integration": "jest tests/integration/*.test.ts",
     "lint": "eslint 'src/**/*.ts'",
     "format": "prettier --write 'src/**/*.ts'",

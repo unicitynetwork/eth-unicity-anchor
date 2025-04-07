@@ -39,38 +39,39 @@ const mockProvider = {
   getCode: jest.fn().mockResolvedValue('0x1234')
 };
 
+// The mocks need to be before the import
+const mockEthers = {
+  JsonRpcProvider: jest.fn().mockImplementation(() => mockProvider),
+  Contract: jest.fn().mockImplementation(() => ({
+    ...mockContractMethods,
+    connect: () => mockContractMethods
+  })),
+  Wallet: jest.fn().mockImplementation(() => ({
+    address: '0x1234567890123456789012345678901234567890'
+  })),
+  getBytes: jest.fn().mockImplementation(data => {
+    if (typeof data === 'string' && data.startsWith('0x')) {
+      const hex = data.slice(2);
+      return new Uint8Array(hex.match(/.{1,2}/g)?.map(byte => parseInt(byte, 16)) || []);
+    }
+    return new Uint8Array();
+  }),
+  hexlify: jest.fn().mockImplementation(bytes => {
+    if (bytes instanceof Uint8Array) {
+      return '0x' + Array.from(bytes)
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+    }
+    return bytes;
+  }),
+  concat: jest.fn().mockImplementation(arrays => arrays[0]),
+  keccak256: jest.fn().mockImplementation(data => {
+    return '0x' + '1'.repeat(64); // Return a fake hash
+  })
+};
+
 // Mock ethers
-jest.mock('ethers', () => {
-  return {
-    JsonRpcProvider: jest.fn().mockImplementation(() => mockProvider),
-    Contract: jest.fn().mockImplementation(() => ({
-      ...mockContractMethods,
-      connect: () => mockContractMethods
-    })),
-    Wallet: jest.fn().mockImplementation(() => ({
-      address: '0x1234567890123456789012345678901234567890'
-    })),
-    getBytes: jest.fn().mockImplementation(data => {
-      if (typeof data === 'string' && data.startsWith('0x')) {
-        const hex = data.slice(2);
-        return new Uint8Array(hex.match(/.{1,2}/g)?.map(byte => parseInt(byte, 16)) || []);
-      }
-      return new Uint8Array();
-    }),
-    hexlify: jest.fn().mockImplementation(bytes => {
-      if (bytes instanceof Uint8Array) {
-        return '0x' + Array.from(bytes)
-          .map(b => b.toString(16).padStart(2, '0'))
-          .join('');
-      }
-      return bytes;
-    }),
-    concat: jest.fn().mockImplementation(arrays => arrays[0]),
-    keccak256: jest.fn().mockImplementation(data => {
-      return '0x' + '1'.repeat(64); // Return a fake hash
-    })
-  };
-});
+jest.mock('ethers', () => mockEthers);
 
 describe('UniCityAnchorClient', () => {
   let client: UniCityAnchorClient;

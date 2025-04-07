@@ -61,7 +61,7 @@ jobs:
         run: cd ts-client && npm ci
 
       - name: Run unit tests with coverage
-        run: cd ts-client && npm test -- --coverage
+        run: cd ts-client && npm run test:utils -- --coverage
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
