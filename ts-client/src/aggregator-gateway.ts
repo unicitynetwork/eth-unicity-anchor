@@ -34,16 +34,15 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
   public async submitCommitment(
     requestID: bigint | string,
     payload: Uint8Array | string,
-    authenticator: Uint8Array | string
+    authenticator: Uint8Array | string,
   ): Promise<TransactionResult> {
     const id = typeof requestID === 'string' ? BigInt(requestID) : requestID;
-    
+
     // Convert string payloads to Uint8Array if needed
-    const payloadBytes = typeof payload === 'string' ? 
-      new TextEncoder().encode(payload) : payload;
-    
-    const authBytes = typeof authenticator === 'string' ? 
-      new TextEncoder().encode(authenticator) : authenticator;
+    const payloadBytes = typeof payload === 'string' ? new TextEncoder().encode(payload) : payload;
+
+    const authBytes =
+      typeof authenticator === 'string' ? new TextEncoder().encode(authenticator) : authenticator;
 
     return this.executeTransaction('submitCommitment', [id, payloadBytes, authBytes]);
   }
@@ -54,11 +53,11 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
    */
   public async createBatch(): Promise<{ batchNumber: bigint; result: TransactionResult }> {
     const result = await this.executeTransaction('createBatch', []);
-    
+
     // Get the latest batch number to return
     // Note: If the transaction failed, this will be the previous batch number
     const batchNumber = await this.getLatestBatchNumber();
-    
+
     return { batchNumber, result };
   }
 
@@ -67,15 +66,17 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
    * @param requestIDs Array of request IDs to include in the batch
    * @returns The created batch number and transaction result
    */
-  public async createBatchForRequests(requestIDs: (bigint | string)[]): Promise<{ batchNumber: bigint; result: TransactionResult }> {
+  public async createBatchForRequests(
+    requestIDs: (bigint | string)[],
+  ): Promise<{ batchNumber: bigint; result: TransactionResult }> {
     // Convert string IDs to BigInt
-    const ids = requestIDs.map(id => typeof id === 'string' ? BigInt(id) : id);
-    
+    const ids = requestIDs.map((id) => (typeof id === 'string' ? BigInt(id) : id));
+
     const result = await this.executeTransaction('createBatchForRequests', [ids]);
-    
+
     // Get the latest batch number to return
     const batchNumber = await this.getLatestBatchNumber();
-    
+
     return { batchNumber, result };
   }
 
@@ -92,12 +93,14 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
       try {
         // Check if there are enough unprocessed requests to create a batch
         const unprocessedCount = await this.getUnprocessedRequestCount();
-        
+
         if (unprocessedCount >= BigInt(this.batchCreationThreshold)) {
           console.log(`Creating batch with ${unprocessedCount} unprocessed requests`);
           await this.createBatch();
         } else {
-          console.log(`Not enough unprocessed requests (${unprocessedCount}) to create a batch (threshold: ${this.batchCreationThreshold})`);
+          console.log(
+            `Not enough unprocessed requests (${unprocessedCount}) to create a batch (threshold: ${this.batchCreationThreshold})`,
+          );
         }
       } catch (error) {
         console.error('Error in auto batch creation:', error);
@@ -108,7 +111,7 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
     this.on(EventType.RequestSubmitted, async () => {
       try {
         const unprocessedCount = await this.getUnprocessedRequestCount();
-        
+
         if (unprocessedCount >= BigInt(this.batchCreationThreshold)) {
           console.log(`Threshold reached (${unprocessedCount} requests). Creating new batch.`);
           await this.createBatch();
@@ -142,15 +145,15 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
     if (request.requestID <= 0) {
       return false;
     }
-    
+
     if (!request.payload || request.payload.length === 0) {
       return false;
     }
-    
+
     if (!request.authenticator || request.authenticator.length === 0) {
       return false;
     }
-    
+
     return true;
   }
 
@@ -160,30 +163,30 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
    * @returns Array of results for each submission
    */
   public async submitMultipleCommitments(
-    requests: CommitmentRequest[]
+    requests: CommitmentRequest[],
   ): Promise<{ requestID: bigint; result: TransactionResult }[]> {
     const results: { requestID: bigint; result: TransactionResult }[] = [];
-    
+
     for (const request of requests) {
       if (this.validateCommitment(request)) {
         const result = await this.submitCommitment(
           request.requestID,
           request.payload,
-          request.authenticator
+          request.authenticator,
         );
-        
+
         results.push({ requestID: request.requestID, result });
       } else {
         results.push({
           requestID: request.requestID,
           result: {
             success: false,
-            error: new Error('Invalid commitment request')
-          }
+            error: new Error('Invalid commitment request'),
+          },
         });
       }
     }
-    
+
     return results;
   }
 }

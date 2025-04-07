@@ -102,7 +102,7 @@ export enum EventType {
   RequestSubmitted = 'RequestSubmitted',
   BatchCreated = 'BatchCreated',
   BatchProcessed = 'BatchProcessed',
-  HashrootSubmitted = 'HashrootSubmitted'
+  HashrootSubmitted = 'HashrootSubmitted',
 }
 
 /**

@@ -32,7 +32,12 @@ export function generateRandomRequestId(): bigint {
   // Generate a random 64-bit integer (to avoid overflow issues)
   const buffer = new Uint8Array(8);
   crypto.getRandomValues(buffer);
-  return BigInt('0x' + Array.from(buffer).map(b => b.toString(16).padStart(2, '0')).join(''));
+  return BigInt(
+    '0x' +
+      Array.from(buffer)
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join(''),
+  );
 }
 
 /**
@@ -44,7 +49,7 @@ export function convertCommitmentToDto(commitment: CommitmentRequest): Commitmen
   return {
     requestID: commitment.requestID.toString(),
     payload: bytesToHex(commitment.payload),
-    authenticator: bytesToHex(commitment.authenticator)
+    authenticator: bytesToHex(commitment.authenticator),
   };
 }
 
@@ -57,7 +62,7 @@ export function convertDtoToCommitment(dto: CommitmentRequestDto): CommitmentReq
   return {
     requestID: BigInt(dto.requestID),
     payload: hexToBytes(dto.payload),
-    authenticator: hexToBytes(dto.authenticator)
+    authenticator: hexToBytes(dto.authenticator),
   };
 }
 
@@ -69,9 +74,9 @@ export function convertDtoToCommitment(dto: CommitmentRequestDto): CommitmentReq
 export function convertBatchToDto(batch: Batch): BatchDto {
   return {
     batchNumber: batch.batchNumber.toString(),
-    requestIds: batch.requestIds.map(id => id.toString()),
+    requestIds: batch.requestIds.map((id) => id.toString()),
     hashroot: bytesToHex(batch.hashroot),
-    processed: batch.processed
+    processed: batch.processed,
   };
 }
 
@@ -83,9 +88,9 @@ export function convertBatchToDto(batch: Batch): BatchDto {
 export function convertDtoToBatch(dto: BatchDto): Batch {
   return {
     batchNumber: BigInt(dto.batchNumber),
-    requestIds: dto.requestIds.map(id => BigInt(id)),
+    requestIds: dto.requestIds.map((id) => BigInt(id)),
     hashroot: hexToBytes(dto.hashroot),
-    processed: dto.processed
+    processed: dto.processed,
   };
 }
 
@@ -95,7 +100,7 @@ export function convertDtoToBatch(dto: BatchDto): Batch {
  * @returns Promise that resolves after the specified time
  */
 export function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -112,9 +117,8 @@ export function getCurrentTimestamp(): number {
  * @returns Hash as Uint8Array
  */
 export async function createHash(content: string | Uint8Array): Promise<Uint8Array> {
-  const data = typeof content === 'string' ? 
-    new TextEncoder().encode(content) : content;
-  
+  const data = typeof content === 'string' ? new TextEncoder().encode(content) : content;
+
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
   return new Uint8Array(hashBuffer);
 }

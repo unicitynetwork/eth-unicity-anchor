@@ -7,10 +7,16 @@ import {
   BatchDto,
   TransactionResult,
   EventType,
-  EventCallback
+  EventCallback,
 } from './types';
 import { ABI } from './abi';
-import { convertCommitmentToDto, convertDtoToCommitment, convertBatchToDto, hexToBytes, bytesToHex } from './utils';
+import {
+  convertCommitmentToDto,
+  convertDtoToCommitment,
+  convertBatchToDto,
+  hexToBytes,
+  bytesToHex,
+} from './utils';
 
 /**
  * Base client for interacting with the Ethereum Unicity Anchor smart contract
@@ -37,7 +43,7 @@ export class UniCityAnchorClient {
       maxRetries: options.maxRetries || 3,
       retryDelay: options.retryDelay || 1000,
       timeoutMs: options.timeoutMs || 60000,
-      gasLimitMultiplier: options.gasLimitMultiplier || 1.2
+      gasLimitMultiplier: options.gasLimitMultiplier || 1.2,
     };
 
     // Handle provider initialization
@@ -85,9 +91,12 @@ export class UniCityAnchorClient {
       this.emitEvent(EventType.BatchProcessed, { batchNumber, hashroot });
     });
 
-    this.contract.on('HashrootSubmitted', (batchNumber: bigint, aggregator: string, hashroot: string) => {
-      this.emitEvent(EventType.HashrootSubmitted, { batchNumber, aggregator, hashroot });
-    });
+    this.contract.on(
+      'HashrootSubmitted',
+      (batchNumber: bigint, aggregator: string, hashroot: string) => {
+        this.emitEvent(EventType.HashrootSubmitted, { batchNumber, aggregator, hashroot });
+      },
+    );
   }
 
   /**
@@ -173,9 +182,9 @@ export class UniCityAnchorClient {
    */
   public async getLatestUnprocessedBatch(): Promise<[bigint, CommitmentRequestDto[]]> {
     const [batchNumber, requests] = await this.contract.getLatestUnprocessedBatch();
-    
+
     const commitments = requests.map((req: any) => convertCommitmentToDto(req));
-    
+
     return [batchNumber, commitments];
   }
 
@@ -191,11 +200,11 @@ export class UniCityAnchorClient {
   }> {
     const bn = typeof batchNumber === 'string' ? BigInt(batchNumber) : batchNumber;
     const [requests, processed, hashroot] = await this.contract.getBatch(bn);
-    
+
     return {
       requests: requests.map((req: any) => convertCommitmentToDto(req)),
       processed,
-      hashroot: bytesToHex(hashroot)
+      hashroot: bytesToHex(hashroot),
     };
   }
 
@@ -242,12 +251,15 @@ export class UniCityAnchorClient {
    * @param hashroot The hashroot to check
    * @returns The number of votes
    */
-  public async getHashrootVoteCount(batchNumber: bigint | string, hashroot: string | Uint8Array): Promise<bigint> {
+  public async getHashrootVoteCount(
+    batchNumber: bigint | string,
+    hashroot: string | Uint8Array,
+  ): Promise<bigint> {
     const bn = typeof batchNumber === 'string' ? BigInt(batchNumber) : batchNumber;
     const hr = typeof hashroot === 'string' ? hexToBytes(hashroot) : hashroot;
     return await this.contract.getHashrootVoteCount(bn, hr);
   }
-  
+
   /**
    * Adds a new trusted aggregator to the contract (only callable by owner)
    * @param aggregator The address of the new aggregator
@@ -256,7 +268,7 @@ export class UniCityAnchorClient {
   public async addAggregator(aggregator: string): Promise<TransactionResult> {
     return this.executeTransaction('addAggregator', [aggregator]);
   }
-  
+
   /**
    * Removes a trusted aggregator from the contract (only callable by owner)
    * @param aggregator The address of the aggregator to remove
@@ -265,7 +277,7 @@ export class UniCityAnchorClient {
   public async removeAggregator(aggregator: string): Promise<TransactionResult> {
     return this.executeTransaction('removeAggregator', [aggregator]);
   }
-  
+
   /**
    * Updates the required number of aggregator votes (only callable by owner)
    * @param newRequiredVotes The new required votes threshold
@@ -274,7 +286,7 @@ export class UniCityAnchorClient {
   public async updateRequiredVotes(newRequiredVotes: bigint | number): Promise<TransactionResult> {
     return this.executeTransaction('updateRequiredVotes', [newRequiredVotes]);
   }
-  
+
   /**
    * Transfers ownership of the contract to a new owner (only callable by current owner)
    * @param newOwner The address of the new owner
@@ -290,14 +302,13 @@ export class UniCityAnchorClient {
    * @param args Arguments for the method
    * @returns Transaction result
    */
-  protected async executeTransaction(
-    method: string,
-    args: any[]
-  ): Promise<TransactionResult> {
+  protected async executeTransaction(method: string, args: any[]): Promise<TransactionResult> {
     if (!this.signer) {
       return {
         success: false,
-        error: new Error('No signer available. Initialize client with privateKey to send transactions.')
+        error: new Error(
+          'No signer available. Initialize client with privateKey to send transactions.',
+        ),
       };
     }
 
@@ -307,38 +318,38 @@ export class UniCityAnchorClient {
       try {
         // Estimate gas for the transaction
         const gasEstimate = await this.contract[method].estimateGas(...args);
-        
+
         // Apply gas multiplier for safety
         const gasLimit = BigInt(Math.floor(Number(gasEstimate) * this.options.gasLimitMultiplier));
-        
+
         // Send the transaction
         const tx = await this.contract[method](...args, { gasLimit });
-        
+
         // Wait for the transaction to be mined
         console.log(`Transaction ${tx.hash} sent, waiting for confirmation...`);
         const receipt = await tx.wait();
         console.log(`Transaction ${tx.hash} confirmed in block ${receipt.blockNumber}`);
-        
+
         return {
           success: true,
           transactionHash: receipt.hash,
           blockNumber: receipt.blockNumber,
-          gasUsed: receipt.gasUsed
+          gasUsed: receipt.gasUsed,
         };
       } catch (error: any) {
         lastError = error;
         console.warn(`Transaction attempt ${attempt + 1} failed: ${error.message}`);
-        
+
         // Wait before retrying
         if (attempt < this.options.maxRetries - 1) {
-          await new Promise(resolve => setTimeout(resolve, this.options.retryDelay));
+          await new Promise((resolve) => setTimeout(resolve, this.options.retryDelay));
         }
       }
     }
 
     return {
       success: false,
-      error: lastError
+      error: lastError,
     };
   }
 }
