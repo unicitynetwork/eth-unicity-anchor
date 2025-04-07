@@ -1,0 +1,60 @@
+codecov:
+  require_ci_to_pass: yes
+  notify:
+    wait_for_ci: yes
+
+coverage:
+  precision: 2
+  round: down
+  range: "70...100"
+  status:
+    project:
+      default:
+        # Entire project coverage
+        target: 70%
+        threshold: 2%
+      solidity:
+        # Smart contract coverage
+        target: 80%
+        threshold: 2%
+        flags: 
+          - solidity
+      typescript:
+        # TypeScript client coverage
+        target: 70%
+        threshold: 5%
+        flags:
+          - typescript
+    patch:
+      default:
+        # Patch coverage (changes made in PR)
+        target: 70%
+        threshold: 5%
+
+flags:
+  solidity:
+    paths:
+      - src/
+    carryforward: true
+  typescript:
+    paths:
+      - ts-client/src/
+    carryforward: true
+
+comment:
+  layout: "reach, diff, flags, files"
+  behavior: default
+  require_changes: false
+  require_base: no
+  require_head: yes
+
+ignore:
+  - "test"
+  - "**/*.test.ts"
+  - "**/*.t.sol"
+  - "**/*.md"
+  - "docs"
+  - "lib"
+  - "node_modules"
+  - "ts-client/tests"
+  - "scripts"

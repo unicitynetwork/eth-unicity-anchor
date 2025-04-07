@@ -286,12 +286,19 @@ Aim for high coverage (>80%) in critical components.
 
 ## Continuous Integration
 
-This project uses GitHub Actions for CI/CD. The workflow includes:
+This project uses GitHub Actions for CI/CD with two main workflows:
 
-1. Building the project
-2. Running smart contract tests
-3. Running TypeScript unit tests
-4. Running integration tests against a local blockchain
+1. **Regular CI Workflow**
+   - Runs on PRs and pushes to main/develop branches
+   - Includes smart contract tests, TypeScript tests, and selective integration tests
+   - Uploads coverage reports to Codecov
+
+2. **Nightly Build Workflow**
+   - Runs every day at midnight UTC
+   - Comprehensive tests including full integration testing
+   - Generates test reports and monitors coverage
+
+For detailed information about our CI setup, see the [CI/CD Guide](./docs/CI-GUIDE.md).
 
 ## Best Practices
 

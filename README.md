@@ -2,12 +2,13 @@
 
 A decentralized commitment management system that ensures consensus on the state of submitted data through a batch processing mechanism and aggregator voting.
 
-[![Smart Contract Tests](https://img.shields.io/badge/Smart%20Contract%20Tests-passing-brightgreen)]()
-[![TypeScript Tests](https://img.shields.io/badge/TypeScript%20Tests-passing-brightgreen)]()
-[![Integration Tests](https://img.shields.io/badge/Integration%20Tests-passing-brightgreen)]()
+[![CI Status](https://github.com/unicitynetwork/eth-unicity-anchor/actions/workflows/test.yml/badge.svg)](https://github.com/unicitynetwork/eth-unicity-anchor/actions/workflows/test.yml)
+[![Nightly Build Status](https://github.com/unicitynetwork/eth-unicity-anchor/actions/workflows/nightly.yml/badge.svg)](https://github.com/unicitynetwork/eth-unicity-anchor/actions/workflows/nightly.yml)
+[![codecov](https://codecov.io/gh/unicitynetwork/eth-unicity-anchor/branch/main/graph/badge.svg)](https://codecov.io/gh/unicitynetwork/eth-unicity-anchor)
 
 - [Development Guide](./DEVELOPMENT_GUIDE.md) - Complete instructions for setting up and developing
 - [Testing Guide](./TESTING_GUIDE.md) - Comprehensive testing guide for all components
+- [CI/CD Guide](./docs/CI-GUIDE.md) - Information about our CI/CD pipeline
 
 ## Overview
 
@@ -173,10 +174,13 @@ For detailed documentation:
 
 Contributions are welcome:
 1. Fork the repository
-2. Create a feature branch
+2. Create a feature branch from `develop`
 3. Make your changes
 4. Run tests to ensure functionality
-5. Submit a pull request
+5. Ensure CI checks pass
+6. Submit a pull request to the `develop` branch
+
+For more information on our CI workflows, see the [CI/CD Guide](./docs/CI-GUIDE.md).
 
 ## License
 
