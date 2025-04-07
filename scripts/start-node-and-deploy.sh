@@ -1,10 +1,29 @@
 #!/bin/bash
 
-# Start Anvil node in a tmux session
-echo "Starting Anvil node in tmux session 'ethereum-node'..."
-tmux new-session -d -s ethereum-node
-tmux send-keys -t ethereum-node "cd /home/vrogojin/Projects/eth_unicity_anchor && anvil" C-m
-echo "Node running in tmux session. Connect with: tmux attach -t ethereum-node"
+# Check if tmux is available
+if command -v tmux &> /dev/null; then
+  # Start Anvil node in a tmux session
+  echo "Starting Anvil node in tmux session 'ethereum-node'..."
+  tmux new-session -d -s ethereum-node
+  tmux send-keys -t ethereum-node "cd /home/vrogojin/Projects/eth_unicity_anchor && anvil" C-m
+  echo "Node running in tmux session. Connect with: tmux attach -t ethereum-node"
+else
+  # Start Anvil node in the background
+  echo "Starting Anvil node in the background (tmux not available)..."
+  cd /home/vrogojin/Projects/eth_unicity_anchor && anvil > anvil.log 2>&1 &
+  ANVIL_PID=$!
+  echo "Node running with PID: $ANVIL_PID (logs in anvil.log)"
+  # Store PID for cleanup
+  echo $ANVIL_PID > .anvil.pid
+  
+  # Add trap to clean up on script exit, but only if EXIT_CLEANUP is set
+  if [ "${EXIT_CLEANUP:-true}" = "true" ]; then
+    trap 'echo "Shutting down Anvil node..."; kill $(cat .anvil.pid) 2>/dev/null || true; rm .anvil.pid' EXIT
+  else
+    echo "NOTE: Anvil node will keep running after this script exits. To shut it down manually:"
+    echo "  kill $(cat .anvil.pid)"
+  fi
+fi
 
 # Give the node some time to start
 echo "Waiting for node to start..."

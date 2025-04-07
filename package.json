@@ -14,7 +14,7 @@
     "compile": "forge build",
     "deploy:local": "node scripts/deploy-anvil.js",
     "test:integration": "cd ts-client && npm test",
-    "dev": "scripts/start-node-and-deploy.sh"
+    "dev": "EXIT_CLEANUP=false scripts/start-node-and-deploy.sh"
   },
   "repository": {
     "type": "git",
