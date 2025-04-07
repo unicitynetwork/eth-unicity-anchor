@@ -2,9 +2,37 @@
 
 A decentralized commitment management system that ensures consensus on the state of submitted data through a batch processing mechanism and aggregator voting.
 
+[![Smart Contract Tests](https://img.shields.io/badge/Smart%20Contract%20Tests-passing-brightgreen)]()
+[![TypeScript Tests](https://img.shields.io/badge/TypeScript%20Tests-passing-brightgreen)]()
+[![Integration Tests](https://img.shields.io/badge/Integration%20Tests-passing-brightgreen)]()
+
+- [Development Guide](./DEVELOPMENT_GUIDE.md) - Complete instructions for setting up and developing
+- [Testing Guide](./TESTING_GUIDE.md) - Comprehensive testing guide for all components
+
 ## Overview
 
 The Ethereum Unicity Anchor provides a trustless framework for processing user commitments with guaranteed consistency across all participants. It enables multiple trusted aggregator services to collect, process, and verify commitment requests in an orderly, immutable manner.
+
+## Quick Start
+
+### Running Integration Tests
+
+To run the integration tests that demonstrate the full system functionality:
+
+```bash
+# Run the automated integration test script
+./scripts/manual-e2e-test.sh
+```
+
+This will:
+1. Start a local Anvil blockchain
+2. Deploy the smart contracts
+3. Run integration tests that verify the TypeScript client can:
+   - Add aggregators
+   - Submit commitments
+   - Create batches
+   - Process batches
+4. Clean up resources when done
 
 ### Key Features:
 
@@ -80,18 +108,44 @@ forge build
 
 ### Testing
 
+This project includes comprehensive testing for both smart contracts and the TypeScript client. For detailed testing instructions, see the [Testing Guide](./TESTING_GUIDE.md).
+
+#### Smart Contract Tests
+
 ```bash
-# Run all tests
+# Run smart contract unit tests
 forge test
 
-# Run tests with verbosity for detailed output
+# Run with verbosity for debugging
 forge test -vvv
-
-# Run a specific test
-forge test --match-test testFunctionName
 
 # Generate gas report
 forge test --gas-report
+```
+
+#### TypeScript Unit Tests
+
+```bash
+cd ts-client
+
+# Run all TypeScript tests
+npm test
+
+# Run specific test files
+npm test -- tests/client.test.ts
+```
+
+#### Integration Tests
+
+```bash
+# Run full integration tests with local blockchain
+./scripts/manual-e2e-test.sh
+
+# For manual testing
+./scripts/start-node-and-deploy.sh
+# Then in another terminal:
+cd ts-client
+CONTRACT_ADDRESS=<address> npm run test:integration
 ```
 
 ### Deployment
