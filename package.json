@@ -10,10 +10,11 @@
   },
   "scripts": {
     "test": "forge test",
-    "node": "hardhat node",
+    "node": "anvil",
     "compile": "forge build",
-    "deploy:local": "hardhat run scripts/deploy.js --network localhost",
-    "test:integration": "cd ts-client && npm test"
+    "deploy:local": "node scripts/deploy-anvil.js",
+    "test:integration": "cd ts-client && npm test",
+    "dev": "scripts/start-node-and-deploy.sh"
   },
   "repository": {
     "type": "git",
@@ -28,9 +29,6 @@
   },
   "homepage": "https://github.com/unicitynetwork/eth-unicity-anchor#readme",
   "devDependencies": {
-    "@nomicfoundation/hardhat-ethers": "^3.0.8",
-    "@nomicfoundation/hardhat-foundry": "^1.1.3",
-    "ethers": "^6.13.5",
-    "hardhat": "^2.22.19"
+    "ethers": "^6.13.5"
   }
 }

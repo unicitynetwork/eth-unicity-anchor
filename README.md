@@ -139,11 +139,11 @@ npm test -- tests/client.test.ts
 #### Integration Tests
 
 ```bash
-# Run full integration tests with local blockchain
+# Run full integration tests with local blockchain using Anvil
 ./scripts/manual-e2e-test.sh
 
-# For manual testing
-./scripts/start-node-and-deploy.sh
+# For manual testing with persistent Anvil node
+npm run dev
 # Then in another terminal:
 cd ts-client
 CONTRACT_ADDRESS=<address> npm run test:integration

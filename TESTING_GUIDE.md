@@ -202,8 +202,8 @@ This script will:
 For more control over the testing process:
 
 ```bash
-# Start a local node and deploy the contracts
-./scripts/start-node-and-deploy.sh
+# Start a local Anvil node and deploy the contracts
+npm run dev
 
 # The script will output the contract address. In a new terminal:
 cd ts-client
