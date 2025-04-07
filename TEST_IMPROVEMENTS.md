@@ -201,17 +201,22 @@ Based on impact vs. effort, here's a prioritized list of improvements:
 
 ### High Priority (Immediate)
 
-1. **Increase TypeScript client unit test coverage to at least 80%**
+1. **Fix TypeScript unit tests that are currently failing**
+   - Fix client.test.ts, aggregator-gateway.test.ts, and aggregator-node.test.ts
+   - Properly mock ethers library and fix reference errors
+   - See the [TODO.md](./TODO.md) file for detailed tasks
+
+2. **Increase TypeScript client unit test coverage to at least 80%**
    - Focus on AggregatorNodeClient first (currently at 14%)
    - Add tests for error handling in all clients
    - Implement proper mocks for contract interactions
 
-2. **Add access control tests for smart contracts**
+3. **Add access control tests for smart contracts**
    - Test all permissioned functions with unauthorized accounts
    - Verify proper error messages
    - Test ownership transfers and aggregator management
 
-3. **Expand integration test scenarios**
+4. **Expand integration test scenarios**
    - Test multi-commitment workflows
    - Test multi-aggregator voting
    - Test error recovery
