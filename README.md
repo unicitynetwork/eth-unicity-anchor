@@ -1,6 +1,6 @@
 # Ethereum Unicity Anchor
 
-A decentralized commitment management system that ensures consensus on the state of submitted data through a batch processing mechanism and aggregator voting.
+A decentralized commitment management system that ensures consensus on the state of all submitted state transitions commitment requests through a batch processing mechanism and aggregator voting.
 
 [![CI Status](https://github.com/unicitynetwork/eth-unicity-anchor/actions/workflows/test.yml/badge.svg)](https://github.com/unicitynetwork/eth-unicity-anchor/actions/workflows/test.yml)
 [![Nightly Build Status](https://github.com/unicitynetwork/eth-unicity-anchor/actions/workflows/nightly.yml/badge.svg)](https://github.com/unicitynetwork/eth-unicity-anchor/actions/workflows/nightly.yml)
