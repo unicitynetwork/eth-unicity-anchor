@@ -12,3 +12,12 @@ docs/
 
 # Dotenv file
 .env
+
+# Integration test artifacts
+*.log
+contract-address.txt
+constructor-args.txt
+deploy-script.js
+
+# Node.js dependencies
+node_modules/

@@ -230,6 +230,42 @@ export class UniCityAnchorClient {
     const hr = typeof hashroot === 'string' ? hexToBytes(hashroot) : hashroot;
     return await this.contract.getHashrootVoteCount(bn, hr);
   }
+  
+  /**
+   * Adds a new trusted aggregator to the contract (only callable by owner)
+   * @param aggregator The address of the new aggregator
+   * @returns Transaction result
+   */
+  public async addAggregator(aggregator: string): Promise<TransactionResult> {
+    return this.executeTransaction('addAggregator', [aggregator]);
+  }
+  
+  /**
+   * Removes a trusted aggregator from the contract (only callable by owner)
+   * @param aggregator The address of the aggregator to remove
+   * @returns Transaction result
+   */
+  public async removeAggregator(aggregator: string): Promise<TransactionResult> {
+    return this.executeTransaction('removeAggregator', [aggregator]);
+  }
+  
+  /**
+   * Updates the required number of aggregator votes (only callable by owner)
+   * @param newRequiredVotes The new required votes threshold
+   * @returns Transaction result
+   */
+  public async updateRequiredVotes(newRequiredVotes: bigint | number): Promise<TransactionResult> {
+    return this.executeTransaction('updateRequiredVotes', [newRequiredVotes]);
+  }
+  
+  /**
+   * Transfers ownership of the contract to a new owner (only callable by current owner)
+   * @param newOwner The address of the new owner
+   * @returns Transaction result
+   */
+  public async transferOwnership(newOwner: string): Promise<TransactionResult> {
+    return this.executeTransaction('transferOwnership', [newOwner]);
+  }
 
   /**
    * Execute a transaction with retry logic
