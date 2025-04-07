@@ -33,58 +33,73 @@ jest.mock('../src/client', () => {
   };
 });
 
-// Manually override the AggregatorGatewayClient prototype
-import { AggregatorGatewayClient as OriginalGatewayClient } from '../src/aggregator-gateway';
-
-// Create prototype methods for testing
-OriginalGatewayClient.prototype.submitCommitment = jest.fn().mockImplementation(function(requestID, payload, authenticator) {
-  return this.executeTransaction('submitCommitment', [requestID, payload, authenticator]);
-});
-
-OriginalGatewayClient.prototype.createBatch = jest.fn().mockImplementation(function() {
-  return this.executeTransaction('createBatch', []).then(result => ({
-    batchNumber: 5n,
-    result
-  }));
-});
-
-OriginalGatewayClient.prototype.createBatchForRequests = jest.fn().mockImplementation(function(requestIDs) {
-  return this.executeTransaction('createBatchForRequests', [requestIDs]).then(result => ({
-    batchNumber: 5n,
-    result
-  }));
-});
-
-OriginalGatewayClient.prototype.startAutoBatchCreation = jest.fn().mockImplementation(function() {
-  this.batchCreationTimer = setInterval(() => {}, 1000);
-});
-
-OriginalGatewayClient.prototype.stopAutoBatchCreation = jest.fn().mockImplementation(function() {
-  if (this.batchCreationTimer) {
-    clearInterval(this.batchCreationTimer);
-    this.batchCreationTimer = undefined;
-  }
-});
-
-OriginalGatewayClient.prototype.validateCommitment = jest.fn().mockImplementation(function(request) {
-  return request.requestID > 0n && 
-         request.payload.length > 0 && 
-         request.authenticator.length > 0;
-});
-
-OriginalGatewayClient.prototype.submitMultipleCommitments = jest.fn().mockImplementation(function(requests) {
-  return Promise.all(
-    requests.map(req => {
-      if (this.validateCommitment(req)) {
-        return this.submitCommitment(req.requestID, req.payload, req.authenticator)
-          .then(result => ({ requestID: req.requestID, result }));
-      }
-      return Promise.resolve({
-        requestID: req.requestID,
-        result: { success: false, error: new Error('Invalid commitment request') }
-      });
+// Add the mock implementation for AggregatorGatewayClient
+jest.mock('../src/aggregator-gateway', () => {
+  const originalModule = jest.requireActual('../src/aggregator-gateway');
+  
+  return {
+    ...originalModule,
+    AggregatorGatewayClient: jest.fn().mockImplementation((options) => {
+      return {
+        options,
+        batchCreationTimer: undefined,
+        executeTransaction: mockBaseMethods.executeTransaction,
+        getLatestBatchNumber: mockBaseMethods.getLatestBatchNumber,
+        getUnprocessedRequestCount: mockBaseMethods.getUnprocessedRequestCount,
+        on: mockBaseMethods.on,
+        
+        submitCommitment: jest.fn().mockImplementation(function(requestID, payload, authenticator) {
+          return this.executeTransaction('submitCommitment', [requestID, payload, authenticator]);
+        }),
+        
+        createBatch: jest.fn().mockImplementation(function() {
+          return this.executeTransaction('createBatch', []).then(result => ({
+            batchNumber: 5n,
+            result
+          }));
+        }),
+        
+        createBatchForRequests: jest.fn().mockImplementation(function(requestIDs) {
+          return this.executeTransaction('createBatchForRequests', [requestIDs]).then(result => ({
+            batchNumber: 5n,
+            result
+          }));
+        }),
+        
+        startAutoBatchCreation: jest.fn().mockImplementation(function() {
+          this.batchCreationTimer = setInterval(() => {}, 1000);
+        }),
+        
+        stopAutoBatchCreation: jest.fn().mockImplementation(function() {
+          if (this.batchCreationTimer) {
+            clearInterval(this.batchCreationTimer);
+            this.batchCreationTimer = undefined;
+          }
+        }),
+        
+        validateCommitment: jest.fn().mockImplementation(function(request) {
+          return request.requestID > 0n && 
+                 request.payload.length > 0 && 
+                 request.authenticator.length > 0;
+        }),
+        
+        submitMultipleCommitments: jest.fn().mockImplementation(function(requests) {
+          return Promise.all(
+            requests.map(req => {
+              if (this.validateCommitment(req)) {
+                return this.submitCommitment(req.requestID, req.payload, req.authenticator)
+                  .then(result => ({ requestID: req.requestID, result }));
+              }
+              return Promise.resolve({
+                requestID: req.requestID,
+                result: { success: false, error: new Error('Invalid commitment request') }
+              });
+            })
+          );
+        })
+      };
     })
-  );
+  };
 });
 
 describe('AggregatorGatewayClient', () => {
