@@ -24,6 +24,9 @@
   ],
   "author": "Unicity Network",
   "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
     "ethers": "^6.8.1",
     "@openzeppelin/merkle-tree": "^1.0.5",
