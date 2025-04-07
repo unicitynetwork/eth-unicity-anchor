@@ -40,10 +40,27 @@ export class UniCityAnchorClient {
       gasLimitMultiplier: options.gasLimitMultiplier || 1.2
     };
 
-    this.provider = new ethers.JsonRpcProvider(options.providerUrl);
+    // Handle provider initialization
+    if (options.provider) {
+      if (typeof options.provider === 'string') {
+        this.provider = new ethers.JsonRpcProvider(options.provider);
+      } else {
+        this.provider = options.provider;
+      }
+    } else if (options.providerUrl) {
+      this.provider = new ethers.JsonRpcProvider(options.providerUrl);
+    } else {
+      throw new Error('Either provider or providerUrl must be provided');
+    }
+
+    // Initialize contract with provider
     this.contract = new ethers.Contract(options.contractAddress, ABI, this.provider);
 
-    if (options.privateKey) {
+    // Initialize signer if provided
+    if (options.signer) {
+      this.signer = options.signer;
+      this.contract = this.contract.connect(this.signer);
+    } else if (options.privateKey) {
       this.signer = new ethers.Wallet(options.privateKey, this.provider);
       this.contract = this.contract.connect(this.signer);
     }
@@ -296,7 +313,11 @@ export class UniCityAnchorClient {
         
         // Send the transaction
         const tx = await this.contract[method](...args, { gasLimit });
+        
+        // Wait for the transaction to be mined
+        console.log(`Transaction ${tx.hash} sent, waiting for confirmation...`);
         const receipt = await tx.wait();
+        console.log(`Transaction ${tx.hash} confirmed in block ${receipt.blockNumber}`);
         
         return {
           success: true,

@@ -17,6 +17,8 @@ describe('End-to-End Integration Tests', () => {
   let nodeClient: AggregatorNodeClient;
   
   beforeAll(async () => {
+    // Set up Jest timeout to handle blockchain transactions
+    jest.setTimeout(30000);
     // Read the contract address from a file or environment variable
     // For now, we'll hardcode it (you'll need to update this after deployment)
     contractAddress = process.env.CONTRACT_ADDRESS || '';
@@ -42,21 +44,32 @@ describe('End-to-End Integration Tests', () => {
     if (contractAddress) {
       const baseClient = new UniCityAnchorClient({
         contractAddress,
-        provider: RPC_URL,
+        provider: provider,
         signer: userWallet
       });
       
       gatewayClient = new AggregatorGatewayClient({
         contractAddress,
-        provider: RPC_URL,
-        signer: userWallet
+        provider: provider,
+        signer: userWallet,
+        gatewayAddress: userWallet.address
       });
       
       nodeClient = new AggregatorNodeClient({
         contractAddress,
-        provider: RPC_URL,
-        signer: aggregatorWallet
+        provider: provider,
+        signer: aggregatorWallet,
+        aggregatorAddress: aggregatorWallet.address,
+        smtDepth: 32 // Default SMT depth
       });
+    }
+  });
+  
+  // Clean up resources after all tests
+  afterAll(async () => {
+    // Close any open connections
+    if (provider) {
+      await provider.destroy();
     }
   });
   
@@ -70,19 +83,33 @@ describe('End-to-End Integration Tests', () => {
     // First, the aggregator wallet needs to be added as an aggregator
     const baseClient = new UniCityAnchorClient({
       contractAddress,
-      provider: RPC_URL,
+      provider: provider,
       signer: userWallet
     });
     
     // Add the aggregator (assuming the user is the owner)
-    await baseClient.addAggregator(aggregatorWallet.address);
+    console.log(`Adding aggregator ${aggregatorWallet.address} to the contract...`);
+    try {
+      const addAggResult = await baseClient.addAggregator(aggregatorWallet.address);
+      console.log('Add aggregator result:', addAggResult);
+    } catch (error) {
+      console.error('Error adding aggregator:', error);
+      throw error;
+    }
     
     // Submit a commitment
     const requestId = Date.now();
     const payload = ethers.toUtf8Bytes('test payload');
     const authenticator = ethers.toUtf8Bytes('test authenticator');
     
-    await gatewayClient.submitCommitment(requestId, payload, authenticator);
+    console.log(`Submitting commitment with requestId: ${requestId}...`);
+    try {
+      const submitResult = await gatewayClient.submitCommitment(requestId, payload, authenticator);
+      console.log('Submit commitment result:', submitResult);
+    } catch (error) {
+      console.error('Error submitting commitment:', error);
+      throw error;
+    }
     
     // Create a batch (this is done by the gateway client, not the node client)
     console.log('Creating a batch...');
@@ -106,12 +133,17 @@ describe('End-to-End Integration Tests', () => {
         
         // Submit a hashroot
         const hashroot = ethers.toUtf8Bytes('test hashroot');
+        console.log('Submitting hashroot:', ethers.hexlify(hashroot));
         await nodeClient.submitHashroot(batchNumber, hashroot);
         
         // Check if the batch is now processed
         const updatedBatchInfo = await nodeClient.getBatch(batchNumber);
+        console.log('Updated batch info:', updatedBatchInfo);
         expect(updatedBatchInfo.processed).toBe(true);
-        expect(updatedBatchInfo.hashroot).toEqual(hashroot);
+        
+        // The hashroot comes back as a hex string, so we need to compare hex strings
+        const expectedHashrootHex = ethers.hexlify(hashroot);
+        expect(updatedBatchInfo.hashroot).toEqual(expectedHashrootHex);
       } catch (error) {
         console.error('Error getting batch:', error);
         throw error;

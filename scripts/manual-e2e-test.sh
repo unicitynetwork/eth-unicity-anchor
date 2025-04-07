@@ -93,6 +93,6 @@ echo "Contract deployed at: $CONTRACT_ADDRESS"
 echo "Running integration tests..."
 cd ts-client
 echo "Contract address for tests: $CONTRACT_ADDRESS"
-CONTRACT_ADDRESS=$CONTRACT_ADDRESS npm run test:integration -- --verbose
+CONTRACT_ADDRESS=$CONTRACT_ADDRESS npm run test:integration -- --verbose --forceExit
 
 echo "Integration tests completed!"

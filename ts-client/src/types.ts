@@ -44,9 +44,11 @@ export interface BatchDto {
  * Options for initializing the client
  */
 export interface ClientOptions {
-  providerUrl: string;
+  providerUrl?: string;
+  provider?: string | any; // Can be a provider URL string or an ethers.Provider
   contractAddress: string;
   privateKey?: string;
+  signer?: any; // Can be an ethers.Wallet or ethers.Signer
   maxRetries?: number;
   retryDelay?: number;
   timeoutMs?: number;
