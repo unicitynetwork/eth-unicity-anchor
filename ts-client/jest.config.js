@@ -16,10 +16,11 @@ module.exports = {
       tsconfig: 'tsconfig.json',
     }],
   },
-  globals: {
-    'ts-jest': {
-      isolatedModules: true,
-    },
-  },
+  // Default timeout for tests (30 seconds)
+  testTimeout: 30000,
+  // Setup for async operations
+  setupFilesAfterEnv: ['./jest.setup.js'],
+  // Detect open handles to help debug unfinished async operations
+  detectOpenHandles: true,
   verbose: true
 };
