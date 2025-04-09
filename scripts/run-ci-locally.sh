@@ -84,7 +84,9 @@ check_tools() {
   fi
   
   node_version=$(node -v | cut -d'v' -f2)
-  if [[ $(echo "$node_version < 20.0.0" | bc -l) -eq 1 ]]; then
+  node_major_version=$(echo "$node_version" | cut -d'.' -f1)
+  
+  if [[ "$node_major_version" -lt 20 ]]; then
     echo -e "${YELLOW}⚠️ Node.js version is less than 20.0.0 (found $node_version). The CI uses Node.js 20.${NC}"
   fi
   
