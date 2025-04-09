@@ -54,22 +54,24 @@ run_step() {
   
   echo -e "\n${BLUE}⏳ Running step: ${step_name}${NC}"
   
-  # Create logs directory if it doesn't exist
-  mkdir -p logs
-  
-  # Use a unique log filename based on the step name
-  local log_file="logs/$(echo "$step_name" | tr ' ' '_' | tr '[:upper:]' '[:lower:]').log"
-  
   if $VERBOSE; then
-    eval "$command"
-  else
-    if ! eval "$command" > "$log_file" 2>&1; then
+    # Run with direct output in verbose mode
+    if ! eval "$command"; then
       echo -e "${RED}❌ Step failed: ${step_name}${NC}"
-      echo -e "${YELLOW}Last 20 lines of output:${NC}"
-      tail -n 20 "$log_file"
-      echo -e "\nFull logs available in: $log_file"
       exit 1
     fi
+  else
+    # Run with captured output in normal mode
+    local temp_log=$(mktemp)
+    if ! eval "$command" > "$temp_log" 2>&1; then
+      echo -e "${RED}❌ Step failed: ${step_name}${NC}"
+      echo -e "${YELLOW}Last 20 lines of output:${NC}"
+      tail -n 20 "$temp_log"
+      echo -e "\nFull command output is above"
+      rm -f "$temp_log"
+      exit 1
+    fi
+    rm -f "$temp_log"
   fi
   
   echo -e "${GREEN}✅ Step completed: ${step_name}${NC}"
@@ -117,7 +119,8 @@ run_test_workflow() {
   # Run contract tests
   run_step "Smart Contract Tests" "forge test -vvv"
   
-  # Run TypeScript client unit tests
+  # Install dependencies and run TypeScript client unit tests
+  run_step "Installing node_modules" "npm ci && cd ts-client && npm ci"
   run_step "TypeScript Client Tests" "cd ts-client && npm run test:unit"
   
   # Run integration tests
@@ -157,10 +160,6 @@ else
   exit 1
 fi
 
-# Ask if we should clean up logs
-if [[ "$CI_WORKFLOW" != "nightly" ]]; then  # Always keep nightly logs
-  echo -e "\n${BLUE}ℹ️ Log files are available in the logs/ directory${NC}"
-  echo -e "${BLUE}ℹ️ These can be useful for debugging any issues${NC}"
-fi
+# No cleanup needed anymore
 
 echo -e "\n${GREEN}🎉 All CI checks passed locally!${NC}"
