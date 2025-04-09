@@ -19,5 +19,9 @@ contract-address.txt
 constructor-args.txt
 deploy-script.js
 
+# Code coverage artifacts
+lcov.info
+coverage/
+
 # Node.js dependencies
 node_modules/
