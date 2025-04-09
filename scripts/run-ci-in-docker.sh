@@ -52,7 +52,9 @@ RUN apt-get update && apt-get install -y \
     git \
     gnupg \
     software-properties-common \
-    bc \
+    lsb-release \
+    jq \
+    netcat \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Foundry
@@ -63,6 +65,11 @@ RUN foundryup
 # Install Node.js 20
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
 RUN apt-get install -y nodejs && rm -rf /var/lib/apt/lists/*
+
+# Install additional tools for network tests
+RUN apt-get update && apt-get install -y \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
 
 # Create a workspace
 WORKDIR /workspace
@@ -85,9 +92,19 @@ docker build -t eth-unicity-anchor-ci -f Dockerfile.ci .
 
 # Run the CI in Docker
 echo "🐳 Running CI workflow in Docker container..."
-docker run --rm -it \
-  -v "$(pwd):/workspace" \
-  eth-unicity-anchor-ci --workflow="$CI_WORKFLOW"
+
+# Check if we're running in a TTY
+if [ -t 1 ]; then
+  # Interactive mode
+  docker run --rm -it \
+    -v "$(pwd):/workspace" \
+    eth-unicity-anchor-ci --workflow="$CI_WORKFLOW"
+else
+  # Non-interactive mode
+  docker run --rm \
+    -v "$(pwd):/workspace" \
+    eth-unicity-anchor-ci --workflow="$CI_WORKFLOW"
+fi
 
 # Clean up
 rm -f Dockerfile.ci

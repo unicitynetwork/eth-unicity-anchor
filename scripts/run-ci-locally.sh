@@ -54,14 +54,20 @@ run_step() {
   
   echo -e "\n${BLUE}⏳ Running step: ${step_name}${NC}"
   
+  # Create logs directory if it doesn't exist
+  mkdir -p logs
+  
+  # Use a unique log filename based on the step name
+  local log_file="logs/$(echo "$step_name" | tr ' ' '_' | tr '[:upper:]' '[:lower:]').log"
+  
   if $VERBOSE; then
     eval "$command"
   else
-    if ! eval "$command" > step_output.log 2>&1; then
+    if ! eval "$command" > "$log_file" 2>&1; then
       echo -e "${RED}❌ Step failed: ${step_name}${NC}"
       echo -e "${YELLOW}Last 20 lines of output:${NC}"
-      tail -n 20 step_output.log
-      echo -e "\nFull logs available in step_output.log"
+      tail -n 20 "$log_file"
+      echo -e "\nFull logs available in: $log_file"
       exit 1
     fi
   fi
@@ -151,7 +157,10 @@ else
   exit 1
 fi
 
-# Clean up
-rm -f step_output.log 2>/dev/null || true
+# Ask if we should clean up logs
+if [[ "$CI_WORKFLOW" != "nightly" ]]; then  # Always keep nightly logs
+  echo -e "\n${BLUE}ℹ️ Log files are available in the logs/ directory${NC}"
+  echo -e "${BLUE}ℹ️ These can be useful for debugging any issues${NC}"
+fi
 
 echo -e "\n${GREEN}🎉 All CI checks passed locally!${NC}"
