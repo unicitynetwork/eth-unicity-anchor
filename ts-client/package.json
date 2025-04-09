@@ -9,7 +9,8 @@
     "test": "jest",
     "test:unit": "jest tests/*.test.ts",
     "test:utils": "jest tests/utils.test.ts",
-    "test:integration": "jest tests/integration/*.test.ts",
+    "test:integration": "jest --config=jest.integration.config.js",
+    "test:all": "npm run test:unit && npm run test:integration",
     "lint": "eslint 'src/**/*.ts'",
     "format": "prettier --write 'src/**/*.ts'",
     "prepare": "npm run build"
@@ -26,7 +27,7 @@
   "author": "Unicity Network",
   "license": "MIT",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "dependencies": {
     "ethers": "^6.8.1",

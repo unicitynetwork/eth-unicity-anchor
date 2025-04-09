@@ -10,11 +10,14 @@
   },
   "scripts": {
     "test": "forge test",
+    "test:contract": "forge test",
+    "test:coverage": "forge coverage --report lcov",
     "node": "anvil",
     "compile": "forge build",
-    "deploy:local": "node scripts/deploy-anvil.js",
-    "test:integration": "cd ts-client && npm test",
-    "dev": "EXIT_CLEANUP=false scripts/start-node-and-deploy.sh"
+    "test:integration": "bash scripts/manual-e2e-test.sh",
+    "test:ts": "cd ts-client && npm run test:unit",
+    "test:all": "npm run test:contract && npm run test:ts && npm run test:integration",
+    "lint": "forge fmt --check && cd ts-client && npm run lint"
   },
   "repository": {
     "type": "git",
@@ -25,7 +28,7 @@
   "license": "ISC",
   "type": "commonjs",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "bugs": {
     "url": "https://github.com/unicitynetwork/eth-unicity-anchor/issues"

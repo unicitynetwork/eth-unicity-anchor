@@ -98,11 +98,11 @@ describe('End-to-End Integration Tests', () => {
     }
     
     // Submit a commitment
-    const requestId = Date.now();
+    const requestId = BigInt(Date.now()); // Convert to BigInt for proper typing
     const payload = ethers.toUtf8Bytes('test payload');
     const authenticator = ethers.toUtf8Bytes('test authenticator');
     
-    console.log(`Submitting commitment with requestId: ${requestId}...`);
+    console.log(`Submitting commitment with requestId: ${requestId.toString()}...`);
     try {
       const submitResult = await gatewayClient.submitCommitment(requestId, payload, authenticator);
       console.log('Submit commitment result:', submitResult);
@@ -170,9 +170,10 @@ describe('End-to-End Integration Tests', () => {
     
     // Try to get latest unprocessed batch
     try {
-      const unprocessedBatch = await nodeClient.getLatestUnprocessedBatch();
+      const [batchNumber, requests] = await nodeClient.getLatestUnprocessedBatch();
       // If we get here, there is an unprocessed batch
-      expect(unprocessedBatch.batchNumber).toBeGreaterThan(0);
+      expect(batchNumber).toBeGreaterThan(0n);
+      expect(requests).toBeDefined();
     } catch (error) {
       // It's okay if there are no unprocessed batches
       console.log('No unprocessed batches found');
