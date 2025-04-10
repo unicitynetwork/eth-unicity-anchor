@@ -1,17 +1,21 @@
 #!/bin/bash
-# Run CI workflows in a Docker container
+# Script to run CI in Docker
 
 set -e  # Exit on error
 
 # Parse command line arguments
 CI_WORKFLOW="test"  # Default to test workflow
-DOCKER_IMAGE="ubuntu:22.04"  # Default Docker image
+VERBOSE=false
+BUILD_ONLY=false
+DOCKER_IMAGE="eth-unicity-anchor-ci"
 
 print_usage() {
   echo "Usage: $0 [options]"
   echo "Options:"
   echo "  --workflow=WORKFLOW  Specify the workflow to run (test, nightly)"
-  echo "  --image=IMAGE        Specify Docker image (default: ubuntu:22.04)"
+  echo "  --verbose            Enable verbose output"
+  echo "  --build-only         Only build the Docker image, don't run tests"
+  echo "  --image=NAME         Specify a custom Docker image name (default: eth-unicity-anchor-ci)"
   echo "  --help               Show this help message"
 }
 
@@ -19,6 +23,12 @@ for arg in "$@"; do
   case $arg in
     --workflow=*)
       CI_WORKFLOW="${arg#*=}"
+      ;;
+    --verbose)
+      VERBOSE=true
+      ;;
+    --build-only)
+      BUILD_ONLY=true
       ;;
     --image=*)
       DOCKER_IMAGE="${arg#*=}"
@@ -35,78 +45,47 @@ for arg in "$@"; do
   esac
 done
 
-echo "🚀 Running CI workflow in Docker: $CI_WORKFLOW"
-echo "📦 Using Docker image: $DOCKER_IMAGE"
+# Define colors for output
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+echo -e "${BLUE}🔨 Building Docker image: ${DOCKER_IMAGE}${NC}"
 
 # Make sure we're in the project root
-cd "$(git rev-parse --show-toplevel)"
-
-# Create a temporary Dockerfile
-cat > Dockerfile.ci << EOF
-FROM $DOCKER_IMAGE
-
-# Install dependencies
-RUN apt-get update && apt-get install -y \
-    curl \
-    build-essential \
-    git \
-    gnupg \
-    software-properties-common \
-    lsb-release \
-    jq \
-    netcat \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Foundry
-RUN curl -L https://foundry.paradigm.xyz | bash
-ENV PATH="\$PATH:/root/.foundry/bin"
-RUN foundryup
-
-# Install Node.js 20
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-RUN apt-get install -y nodejs && rm -rf /var/lib/apt/lists/*
-
-# Install additional tools for network tests
-RUN apt-get update && apt-get install -y \
-    procps \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create a workspace
-WORKDIR /workspace
-
-# Copy workflow scripts
-COPY .github/workflows /workspace/.github/workflows
-COPY scripts/run-ci-locally.sh /workspace/scripts/
-
-# Make the script executable
-RUN chmod +x /workspace/scripts/run-ci-locally.sh
-
-# Set entrypoint
-ENTRYPOINT ["/workspace/scripts/run-ci-locally.sh"]
-CMD ["--workflow=$CI_WORKFLOW"]
-EOF
-
-# Build the CI image
-echo "🔨 Building CI Docker image..."
-docker build -t eth-unicity-anchor-ci -f Dockerfile.ci .
-
-# Run the CI in Docker
-echo "🐳 Running CI workflow in Docker container..."
-
-# Check if we're running in a TTY
-if [ -t 1 ]; then
-  # Interactive mode
-  docker run --rm -it \
-    -v "$(pwd):/workspace" \
-    eth-unicity-anchor-ci --workflow="$CI_WORKFLOW"
-else
-  # Non-interactive mode
-  docker run --rm \
-    -v "$(pwd):/workspace" \
-    eth-unicity-anchor-ci --workflow="$CI_WORKFLOW"
+if command -v git &> /dev/null && git rev-parse --is-inside-work-tree &> /dev/null; then
+  cd "$(git rev-parse --show-toplevel)"
 fi
 
-# Clean up
-rm -f Dockerfile.ci
+# Build Docker image
+docker build -t "$DOCKER_IMAGE" -f Dockerfile.ci .
 
-echo "✅ CI run completed!"
+echo -e "${GREEN}✅ Docker image built successfully${NC}"
+
+# If build-only flag is set, exit here
+if $BUILD_ONLY; then
+  echo -e "${BLUE}Image built successfully. Use the following command to run tests:${NC}"
+  echo -e "  docker run --rm $DOCKER_IMAGE --workflow=$CI_WORKFLOW"
+  exit 0
+fi
+
+echo -e "${BLUE}🚀 Running CI workflow in Docker: $CI_WORKFLOW${NC}"
+
+# Run Docker container with appropriate flags
+DOCKER_ARGS=""
+if $VERBOSE; then
+  DOCKER_ARGS="--verbose"
+fi
+
+docker run --rm "$DOCKER_IMAGE" --workflow="$CI_WORKFLOW" $DOCKER_ARGS
+
+exit_code=$?
+
+if [ $exit_code -eq 0 ]; then
+  echo -e "${GREEN}✅ CI workflow completed successfully in Docker!${NC}"
+else
+  echo -e "${RED}❌ CI workflow failed in Docker with exit code $exit_code${NC}"
+  exit $exit_code
+fi
