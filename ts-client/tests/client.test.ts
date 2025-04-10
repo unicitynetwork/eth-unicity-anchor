@@ -1,10 +1,34 @@
-import { EventType } from '../src/types';
+import { EventType, CommitmentRequest, TransactionResult } from '../src/types';
 
-// Define mock types first
+// Define proper mock types
+interface MockContract {
+  getLatestBatchNumber: jest.Mock;
+  getLatestProcessedBatchNumber: jest.Mock;
+  getCommitment: jest.Mock;
+  getBatch: jest.Mock;
+  getLatestUnprocessedBatch: jest.Mock;
+  getBatchHashroot: jest.Mock;
+  getUnprocessedRequestCount: jest.Mock;
+  getAllUnprocessedRequests: jest.Mock;
+  isRequestUnprocessed: jest.Mock;
+  getHashrootVoteCount: jest.Mock;
+  on: jest.Mock;
+  connect: () => MockContract;
+}
+
+interface MockProvider {
+  getNetwork: jest.Mock;
+  getCode: jest.Mock;
+}
+
+interface MockWallet {
+  address: string;
+}
+
 type MockEthers = {
-  JsonRpcProvider: jest.Mock;
-  Contract: jest.Mock;
-  Wallet: jest.Mock;
+  JsonRpcProvider: jest.Mock<MockProvider>;
+  Contract: jest.Mock<MockContract>;
+  Wallet: jest.Mock<MockWallet>;
   getBytes: jest.Mock;
   hexlify: jest.Mock;
   concat: jest.Mock;
@@ -13,7 +37,7 @@ type MockEthers = {
 
 // Set up mocks before importing modules that use them
 // Create mock implementations first
-const mockContractMethods = {
+const mockContractMethods: MockContract = {
   getLatestBatchNumber: jest.fn().mockResolvedValue(5n),
   getLatestProcessedBatchNumber: jest.fn().mockResolvedValue(3n),
   getCommitment: jest.fn().mockResolvedValue({
@@ -41,10 +65,11 @@ const mockContractMethods = {
   getAllUnprocessedRequests: jest.fn().mockResolvedValue([5n, 6n]),
   isRequestUnprocessed: jest.fn().mockResolvedValue(true),
   getHashrootVoteCount: jest.fn().mockResolvedValue(2n),
-  on: jest.fn()
+  on: jest.fn(),
+  connect: () => mockContractMethods
 };
 
-const mockProvider = {
+const mockProvider: MockProvider = {
   getNetwork: jest.fn().mockResolvedValue({ chainId: 1n }),
   getCode: jest.fn().mockResolvedValue('0x1234')
 };
@@ -59,23 +84,23 @@ const mockEthers: MockEthers = {
   Wallet: jest.fn().mockImplementation(() => ({
     address: '0x1234567890123456789012345678901234567890'
   })),
-  getBytes: jest.fn().mockImplementation((data: any) => {
+  getBytes: jest.fn().mockImplementation((data: string | Uint8Array): Uint8Array => {
     if (typeof data === 'string' && data.startsWith('0x')) {
       const hex = data.slice(2);
       return new Uint8Array(hex.match(/.{1,2}/g)?.map(byte => parseInt(byte, 16)) || []);
     }
     return new Uint8Array();
   }),
-  hexlify: jest.fn().mockImplementation((bytes: any) => {
+  hexlify: jest.fn().mockImplementation((bytes: Uint8Array | string): string => {
     if (bytes instanceof Uint8Array) {
       return '0x' + Array.from(bytes)
         .map(b => b.toString(16).padStart(2, '0'))
         .join('');
     }
-    return bytes;
+    return bytes as string;
   }),
-  concat: jest.fn().mockImplementation((arrays: any[]) => arrays[0]),
-  keccak256: jest.fn().mockImplementation((data: any) => {
+  concat: jest.fn().mockImplementation((arrays: Uint8Array[]): Uint8Array => arrays[0]),
+  keccak256: jest.fn().mockImplementation((_data: string | Uint8Array): string => {
     return '0x' + '1'.repeat(64); // Return a fake hash
   })
 };

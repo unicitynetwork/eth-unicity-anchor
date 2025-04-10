@@ -1,9 +1,33 @@
 import { AggregatorGatewayClient } from '../src/aggregator-gateway';
-import { EventType } from '../src/types';
+import { CommitmentRequest, EventType, GatewayConfig, TransactionResult } from '../src/types';
+
+// Define types for our mock methods
+interface MockBaseMethods {
+  executeTransaction: jest.Mock<Promise<TransactionResult>, [string, any[]]>;
+  getLatestBatchNumber: jest.Mock<Promise<bigint>>;
+  getUnprocessedRequestCount: jest.Mock<Promise<bigint>>;
+  on: jest.Mock;
+}
+
+interface MockGatewayClient {
+  options: GatewayConfig;
+  batchCreationTimer: NodeJS.Timeout | undefined;
+  executeTransaction: MockBaseMethods['executeTransaction'];
+  getLatestBatchNumber: MockBaseMethods['getLatestBatchNumber'];
+  getUnprocessedRequestCount: MockBaseMethods['getUnprocessedRequestCount'];
+  on: MockBaseMethods['on'];
+  submitCommitment: jest.Mock<Promise<TransactionResult>, [bigint | string, Uint8Array | string, Uint8Array | string]>;
+  createBatch: jest.Mock<Promise<{ batchNumber: bigint; result: TransactionResult }>>;
+  createBatchForRequests: jest.Mock<Promise<{ batchNumber: bigint; result: TransactionResult }>, [Array<bigint | string>]>;
+  startAutoBatchCreation: jest.Mock;
+  stopAutoBatchCreation: jest.Mock;
+  validateCommitment: jest.Mock<boolean, [CommitmentRequest]>;
+  submitMultipleCommitments: jest.Mock<Promise<Array<{ requestID: bigint; result: TransactionResult }>>, [CommitmentRequest[]]>;
+}
 
 // Create mock implementation
-const mockBaseMethods = {
-  executeTransaction: jest.fn().mockImplementation((method, args) => {
+const mockBaseMethods: MockBaseMethods = {
+  executeTransaction: jest.fn().mockImplementation((method: string, args: any[]) => {
     if (method === 'submitCommitment') {
       return Promise.resolve({ success: true, transactionHash: '0x123' });
     } else if (method === 'createBatch') {
@@ -39,7 +63,7 @@ jest.mock('../src/aggregator-gateway', () => {
   
   return {
     ...originalModule,
-    AggregatorGatewayClient: jest.fn().mockImplementation((options) => {
+    AggregatorGatewayClient: jest.fn().mockImplementation((options: GatewayConfig): MockGatewayClient => {
       return {
         options,
         batchCreationTimer: undefined,
@@ -48,63 +72,69 @@ jest.mock('../src/aggregator-gateway', () => {
         getUnprocessedRequestCount: mockBaseMethods.getUnprocessedRequestCount,
         on: mockBaseMethods.on,
         
-        submitCommitment: jest.fn().mockImplementation((requestID: any, payload: any, authenticator: any) => {
-          return mockBaseMethods.executeTransaction('submitCommitment', [requestID, payload, authenticator]);
-        }),
+        submitCommitment: jest.fn().mockImplementation(
+          (requestID: bigint | string, payload: Uint8Array | string, authenticator: Uint8Array | string): Promise<TransactionResult> => {
+            return mockBaseMethods.executeTransaction('submitCommitment', [requestID, payload, authenticator]);
+          }
+        ),
         
-        createBatch: jest.fn().mockImplementation(() => {
-          return mockBaseMethods.executeTransaction('createBatch', []).then((result: any) => ({
+        createBatch: jest.fn().mockImplementation((): Promise<{ batchNumber: bigint; result: TransactionResult }> => {
+          return mockBaseMethods.executeTransaction('createBatch', []).then((result: TransactionResult) => ({
             batchNumber: 5n,
             result
           }));
         }),
         
-        createBatchForRequests: jest.fn().mockImplementation((requestIDs: any) => {
-          return mockBaseMethods.executeTransaction('createBatchForRequests', [requestIDs]).then((result: any) => ({
-            batchNumber: 5n,
-            result
-          }));
-        }),
+        createBatchForRequests: jest.fn().mockImplementation(
+          (requestIDs: Array<bigint | string>): Promise<{ batchNumber: bigint; result: TransactionResult }> => {
+            return mockBaseMethods.executeTransaction('createBatchForRequests', [requestIDs]).then((result: TransactionResult) => ({
+              batchNumber: 5n,
+              result
+            }));
+          }
+        ),
         
-        startAutoBatchCreation: jest.fn().mockImplementation(function(this: any) {
+        startAutoBatchCreation: jest.fn().mockImplementation(function(this: MockGatewayClient): void {
           this.batchCreationTimer = setInterval(() => {}, 1000);
         }),
         
-        stopAutoBatchCreation: jest.fn().mockImplementation(function(this: any) {
+        stopAutoBatchCreation: jest.fn().mockImplementation(function(this: MockGatewayClient): void {
           if (this.batchCreationTimer) {
             clearInterval(this.batchCreationTimer);
             this.batchCreationTimer = undefined;
           }
         }),
         
-        validateCommitment: jest.fn().mockImplementation((request: any) => {
+        validateCommitment: jest.fn().mockImplementation((request: CommitmentRequest): boolean => {
           return request.requestID > 0n && 
                  request.payload.length > 0 && 
                  request.authenticator.length > 0;
         }),
         
-        submitMultipleCommitments: jest.fn().mockImplementation(function(this: any, requests: any[]) {
-          const self = this;
-          return Promise.all(
-            requests.map((req: any) => {
-              if (self.validateCommitment(req)) {
-                return self.submitCommitment(req.requestID, req.payload, req.authenticator)
-                  .then((result: any) => ({ requestID: req.requestID, result }));
-              }
-              return Promise.resolve({
-                requestID: req.requestID,
-                result: { success: false, error: new Error('Invalid commitment request') }
-              });
-            })
-          );
-        })
+        submitMultipleCommitments: jest.fn().mockImplementation(
+          function(this: MockGatewayClient, requests: CommitmentRequest[]): Promise<Array<{ requestID: bigint; result: TransactionResult }>> {
+            const self = this;
+            return Promise.all(
+              requests.map((req: CommitmentRequest) => {
+                if (self.validateCommitment(req)) {
+                  return self.submitCommitment(req.requestID, req.payload, req.authenticator)
+                    .then((result: TransactionResult) => ({ requestID: req.requestID, result }));
+                }
+                return Promise.resolve({
+                  requestID: req.requestID,
+                  result: { success: false, error: new Error('Invalid commitment request') }
+                });
+              })
+            );
+          }
+        )
       };
     })
   };
 });
 
 describe('AggregatorGatewayClient', () => {
-  let gateway: AggregatorGatewayClient;
+  let gateway: MockGatewayClient;
   
   beforeEach(() => {
     jest.clearAllMocks();
@@ -117,13 +147,13 @@ describe('AggregatorGatewayClient', () => {
       batchCreationThreshold: 50,
       batchCreationInterval: 60000, // 1 minute
       autoCreateBatches: false
-    });
+    }) as unknown as MockGatewayClient;
   });
   
   afterEach(() => {
-    if (gateway['batchCreationTimer']) {
-      clearInterval(gateway['batchCreationTimer']);
-      gateway['batchCreationTimer'] = undefined;
+    if (gateway.batchCreationTimer) {
+      clearInterval(gateway.batchCreationTimer);
+      gateway.batchCreationTimer = undefined;
     }
   });
   
@@ -137,7 +167,7 @@ describe('AggregatorGatewayClient', () => {
       
       expect(result.success).toBe(true);
       expect(result.transactionHash).toBe('0x123');
-      expect(gateway['executeTransaction']).toHaveBeenCalledWith('submitCommitment', [
+      expect(gateway.executeTransaction).toHaveBeenCalledWith('submitCommitment', [
         123n,
         new Uint8Array([1, 2, 3]),
         new Uint8Array([4, 5, 6])
@@ -153,7 +183,7 @@ describe('AggregatorGatewayClient', () => {
       
       expect(result.success).toBe(true);
       // Allow either the string input or the converted BigInt
-      expect(gateway['executeTransaction']).toHaveBeenCalledWith('submitCommitment', [
+      expect(gateway.executeTransaction).toHaveBeenCalledWith('submitCommitment', [
         expect.anything(), // Accept either '456' or 456n
         expect.anything(), // Accept either raw string or converted bytes
         expect.anything()  // Accept either raw string or converted bytes
@@ -168,7 +198,7 @@ describe('AggregatorGatewayClient', () => {
       expect(result.success).toBe(true);
       expect(result.transactionHash).toBe('0x456');
       expect(batchNumber).toBe(5n);
-      expect(gateway['executeTransaction']).toHaveBeenCalledWith('createBatch', []);
+      expect(gateway.executeTransaction).toHaveBeenCalledWith('createBatch', []);
     });
   });
   
@@ -179,7 +209,7 @@ describe('AggregatorGatewayClient', () => {
       expect(result.success).toBe(true);
       expect(result.transactionHash).toBe('0x789');
       expect(batchNumber).toBe(5n);
-      expect(gateway['executeTransaction']).toHaveBeenCalledWith('createBatchForRequests', [[1n, 2n, 3n]]);
+      expect(gateway.executeTransaction).toHaveBeenCalledWith('createBatchForRequests', [[1n, 2n, 3n]]);
     });
     
     it('should handle string request IDs', async () => {
@@ -187,7 +217,7 @@ describe('AggregatorGatewayClient', () => {
       
       expect(result.success).toBe(true);
       // Accept either string inputs or converted BigInts
-      expect(gateway['executeTransaction']).toHaveBeenCalledWith('createBatchForRequests', [
+      expect(gateway.executeTransaction).toHaveBeenCalledWith('createBatchForRequests', [
         expect.arrayContaining([
           expect.anything(),
           expect.anything(),
@@ -208,30 +238,31 @@ describe('AggregatorGatewayClient', () => {
     
     it('should start auto batch creation', () => {
       gateway.startAutoBatchCreation();
-      expect(gateway['batchCreationTimer']).toBeDefined();
+      expect(gateway.batchCreationTimer).toBeDefined();
     });
     
     it('should stop auto batch creation', () => {
       gateway.startAutoBatchCreation();
       gateway.stopAutoBatchCreation();
-      expect(gateway['batchCreationTimer']).toBeUndefined();
+      expect(gateway.batchCreationTimer).toBeUndefined();
     });
     
     // Skip tests that cause timeout issues
     it('should create a batch when threshold is reached', async () => {
       // Mock the process
       const mockBatchCreation = jest.fn();
-      gateway['createBatch'] = mockBatchCreation;
+      gateway.createBatch = mockBatchCreation;
       
       // Simulate the batch creation function that would be called by the timer
       gateway.startAutoBatchCreation();
       
       // Directly trigger the batch creation logic
       // This simulates what would happen when the timer fires, without using timers
-      const batchCreationFn = (gateway as any).createBatchIfNeeded || 
+      type CreateBatchIfNeededFn = () => Promise<void>;
+      const batchCreationFn: CreateBatchIfNeededFn = (gateway as any).createBatchIfNeeded || 
                               (async () => {
-                                if (await gateway['getUnprocessedRequestCount']() >= 50n) {
-                                  await gateway['createBatch']();
+                                if (await gateway.getUnprocessedRequestCount() >= 50n) {
+                                  await gateway.createBatch();
                                 }
                               });
                               
@@ -246,21 +277,22 @@ describe('AggregatorGatewayClient', () => {
     
     it('should not create a batch when threshold is not reached', async () => {
       // Mock a lower count
-      gateway['getUnprocessedRequestCount'] = jest.fn().mockResolvedValue(40n);
+      gateway.getUnprocessedRequestCount = jest.fn().mockResolvedValue(40n);
       
       // Mock the process
       const mockBatchCreation = jest.fn();
-      gateway['createBatch'] = mockBatchCreation;
+      gateway.createBatch = mockBatchCreation;
       
       // Simulate the batch creation function that would be called by the timer
       gateway.startAutoBatchCreation();
       
       // Directly trigger the batch creation logic
       // This simulates what would happen when the timer fires, without using timers
-      const batchCreationFn = (gateway as any).createBatchIfNeeded || 
+      type CreateBatchIfNeededFn = () => Promise<void>;
+      const batchCreationFn: CreateBatchIfNeededFn = (gateway as any).createBatchIfNeeded || 
                               (async () => {
-                                if (await gateway['getUnprocessedRequestCount']() >= 50n) {
-                                  await gateway['createBatch']();
+                                if (await gateway.getUnprocessedRequestCount() >= 50n) {
+                                  await gateway.createBatch();
                                 }
                               });
                               

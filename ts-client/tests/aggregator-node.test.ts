@@ -1,10 +1,46 @@
 import { AggregatorNodeClient } from '../src/aggregator-node';
-import { EventType } from '../src/types';
+import { CommitmentRequest, EventType, AggregatorConfig, TransactionResult } from '../src/types';
 
-// Remove duplicate mock
+// Define proper types for mocks
+interface MerkleTreeMock {
+  root: string;
+  entries: jest.Mock;
+  getProof: jest.Mock;
+}
+
+interface MockMerkleTree {
+  StandardMerkleTree: {
+    of: jest.Mock<MerkleTreeMock>;
+  };
+}
+
+interface MockNodeBaseMethods {
+  executeTransaction: jest.Mock<Promise<TransactionResult>, [string, any[]]>;
+  getLatestBatchNumber: jest.Mock<Promise<bigint>>;
+  getLatestProcessedBatchNumber: jest.Mock<Promise<bigint>>;
+  getBatch: jest.Mock<Promise<{ requests: Array<{ requestID: string, payload: string, authenticator: string }>, processed: boolean, hashroot: string }>>;
+  on: jest.Mock;
+}
+
+interface MockNodeClient {
+  options: AggregatorConfig;
+  batchProcessingTimer: NodeJS.Timeout | undefined;
+  executeTransaction: MockNodeBaseMethods['executeTransaction'];
+  getLatestBatchNumber: MockNodeBaseMethods['getLatestBatchNumber'];
+  getLatestProcessedBatchNumber: MockNodeBaseMethods['getLatestProcessedBatchNumber'];
+  getBatch: MockNodeBaseMethods['getBatch'];
+  on: MockNodeBaseMethods['on'];
+  submitHashroot: jest.Mock<Promise<TransactionResult>, [bigint | string, Uint8Array | string]>;
+  processBatch: jest.Mock<Promise<TransactionResult>, [bigint | string]>;
+  startAutoBatchProcessing: jest.Mock;
+  stopAutoBatchProcessing: jest.Mock;
+  canProcessNextBatch: jest.Mock<Promise<boolean>>;
+  getNextBatchToProcess: jest.Mock<Promise<bigint | null>>;
+  generateMerkleProof: jest.Mock<Promise<{ proof: string[], value: string } | null>, [bigint | string, bigint | string]>;
+}
 
 jest.mock('@openzeppelin/merkle-tree', () => {
-  const mockTree = {
+  const mockTree: MerkleTreeMock = {
     root: '0xabcdef1234567890',
     entries: jest.fn().mockImplementation(function*() {
       yield [0, ['1', '0x123456']];
@@ -21,8 +57,8 @@ jest.mock('@openzeppelin/merkle-tree', () => {
 });
 
 // Create mock implementation
-const mockNodeBaseMethods = {
-  executeTransaction: jest.fn().mockImplementation((method, args) => {
+const mockNodeBaseMethods: MockNodeBaseMethods = {
+  executeTransaction: jest.fn().mockImplementation((method: string, args: any[]) => {
     if (method === 'submitHashroot') {
       return Promise.resolve({ success: true, transactionHash: '0x123' });
     }
@@ -59,7 +95,7 @@ jest.mock('../src/client', () => {
 // Mock ethers
 jest.mock('ethers', () => {
   return {
-    concat: jest.fn().mockImplementation(arrays => arrays[0])
+    concat: jest.fn().mockImplementation((arrays: Uint8Array[]) => arrays[0])
   };
 });
 
@@ -69,7 +105,7 @@ jest.mock('../src/aggregator-node', () => {
   
   return {
     ...originalModule,
-    AggregatorNodeClient: jest.fn().mockImplementation((options) => {
+    AggregatorNodeClient: jest.fn().mockImplementation((options: AggregatorConfig): MockNodeClient => {
       return {
         options,
         batchProcessingTimer: undefined,
@@ -79,64 +115,68 @@ jest.mock('../src/aggregator-node', () => {
         getBatch: mockNodeBaseMethods.getBatch,
         on: mockNodeBaseMethods.on,
         
-        submitHashroot: jest.fn().mockImplementation((batchNumber: any, hashroot: any) => {
-          return mockNodeBaseMethods.executeTransaction('submitHashroot', [batchNumber, hashroot]);
-        }),
+        submitHashroot: jest.fn().mockImplementation(
+          (batchNumber: bigint | string, hashroot: Uint8Array | string): Promise<TransactionResult> => {
+            return mockNodeBaseMethods.executeTransaction('submitHashroot', [batchNumber, hashroot]);
+          }
+        ),
         
-        processBatch: jest.fn().mockImplementation(function(this: any, batchNumber: any) {
-          const self = this;
-          const bn = typeof batchNumber === 'string' ? BigInt(batchNumber) : batchNumber;
-          
-          return self.getLatestProcessedBatchNumber().then((latestProcessed: bigint) => {
-            // Check if already processed
-            if (bn <= latestProcessed) {
-              return { success: false, error: new Error(`Batch ${bn} is already processed`) };
-            }
+        processBatch: jest.fn().mockImplementation(
+          function(this: MockNodeClient, batchNumber: bigint | string): Promise<TransactionResult> {
+            const self = this;
+            const bn = typeof batchNumber === 'string' ? BigInt(batchNumber) : batchNumber;
             
-            // Check sequence
-            if (bn !== latestProcessed + BigInt(1)) {
-              return { success: false, error: new Error(`Batch ${bn} cannot be processed yet. Current processed: ${latestProcessed}`) };
-            }
-            
-            return self.getBatch(bn).then((batch: { requests: any[], processed: boolean }) => {
-              const { requests, processed } = batch;
-              if (processed) {
+            return self.getLatestProcessedBatchNumber().then((latestProcessed: bigint) => {
+              // Check if already processed
+              if (bn <= latestProcessed) {
                 return { success: false, error: new Error(`Batch ${bn} is already processed`) };
               }
               
-              // Return successful result
-              return self.submitHashroot(bn, new Uint8Array([1, 2, 3, 4]));
+              // Check sequence
+              if (bn !== latestProcessed + BigInt(1)) {
+                return { success: false, error: new Error(`Batch ${bn} cannot be processed yet. Current processed: ${latestProcessed}`) };
+              }
+              
+              return self.getBatch(bn).then((batch: { requests: any[], processed: boolean }) => {
+                const { requests, processed } = batch;
+                if (processed) {
+                  return { success: false, error: new Error(`Batch ${bn} is already processed`) };
+                }
+                
+                // Return successful result
+                return self.submitHashroot(bn, new Uint8Array([1, 2, 3, 4]));
+              });
             });
-          });
-        }),
+          }
+        ),
         
-        startAutoBatchProcessing: jest.fn().mockImplementation(function(this: any) {
+        startAutoBatchProcessing: jest.fn().mockImplementation(function(this: MockNodeClient): void {
           this.batchProcessingTimer = setInterval(() => {}, 1000);
         }),
         
-        stopAutoBatchProcessing: jest.fn().mockImplementation(function(this: any) {
+        stopAutoBatchProcessing: jest.fn().mockImplementation(function(this: MockNodeClient): void {
           if (this.batchProcessingTimer) {
             clearInterval(this.batchProcessingTimer);
             this.batchProcessingTimer = undefined;
           }
         }),
         
-        canProcessNextBatch: jest.fn().mockImplementation(function(this: any) {
+        canProcessNextBatch: jest.fn().mockImplementation(function(this: MockNodeClient): Promise<boolean> {
           const self = this;
           return Promise.all([
             self.getLatestBatchNumber(),
             self.getLatestProcessedBatchNumber()
-          ]).then(([latestBatch, latestProcessed]) => {
+          ]).then(([latestBatch, latestProcessed]: [bigint, bigint]) => {
             return latestBatch > latestProcessed;
           });
         }),
         
-        getNextBatchToProcess: jest.fn().mockImplementation(function(this: any) {
+        getNextBatchToProcess: jest.fn().mockImplementation(function(this: MockNodeClient): Promise<bigint | null> {
           const self = this;
           return Promise.all([
             self.getLatestBatchNumber(),
             self.getLatestProcessedBatchNumber()
-          ]).then(([latestBatch, latestProcessed]) => {
+          ]).then(([latestBatch, latestProcessed]: [bigint, bigint]) => {
             if (latestBatch > latestProcessed) {
               return latestProcessed + BigInt(1);
             }
@@ -144,27 +184,29 @@ jest.mock('../src/aggregator-node', () => {
           });
         }),
         
-        generateMerkleProof: jest.fn().mockImplementation(function(this: any, batchNumber: any, requestID: any) {
-          const self = this;
-          return self.getBatch(batchNumber).then((batch: { requests: any[], processed: boolean }) => {
-            const { requests, processed } = batch;
-            if (!processed) {
-              return null;
-            }
-            
-            return {
-              proof: ['0x111', '0x222', '0x333'],
-              value: '0x999'
-            };
-          });
-        })
+        generateMerkleProof: jest.fn().mockImplementation(
+          function(this: MockNodeClient, batchNumber: bigint | string, requestID: bigint | string): Promise<{ proof: string[], value: string } | null> {
+            const self = this;
+            return self.getBatch(batchNumber).then((batch: { requests: any[], processed: boolean }) => {
+              const { requests, processed } = batch;
+              if (!processed) {
+                return null;
+              }
+              
+              return {
+                proof: ['0x111', '0x222', '0x333'],
+                value: '0x999'
+              };
+            });
+          }
+        )
       };
     })
   };
 });
 
 describe('AggregatorNodeClient', () => {
-  let aggregator: AggregatorNodeClient;
+  let aggregator: MockNodeClient;
   
   beforeEach(() => {
     jest.clearAllMocks();
@@ -177,13 +219,13 @@ describe('AggregatorNodeClient', () => {
       smtDepth: 32,
       batchProcessingInterval: 60000, // 1 minute
       autoProcessBatches: false
-    });
+    }) as unknown as MockNodeClient;
   });
   
   afterEach(() => {
-    if (aggregator['batchProcessingTimer']) {
-      clearInterval(aggregator['batchProcessingTimer']);
-      aggregator['batchProcessingTimer'] = undefined;
+    if (aggregator.batchProcessingTimer) {
+      clearInterval(aggregator.batchProcessingTimer);
+      aggregator.batchProcessingTimer = undefined;
     }
   });
   
@@ -196,7 +238,7 @@ describe('AggregatorNodeClient', () => {
       
       expect(result.success).toBe(true);
       expect(result.transactionHash).toBe('0x123');
-      expect(aggregator['executeTransaction']).toHaveBeenCalledWith('submitHashroot', [
+      expect(aggregator.executeTransaction).toHaveBeenCalledWith('submitHashroot', [
         4n,
         new Uint8Array([1, 2, 3, 4])
       ]);
@@ -210,7 +252,7 @@ describe('AggregatorNodeClient', () => {
       
       expect(result.success).toBe(true);
       // Accept either string or converted values
-      expect(aggregator['executeTransaction']).toHaveBeenCalledWith('submitHashroot', [
+      expect(aggregator.executeTransaction).toHaveBeenCalledWith('submitHashroot', [
         expect.anything(), // Accept either '4' or 4n
         expect.anything()  // Accept either raw string or converted bytes
       ]);
@@ -222,7 +264,7 @@ describe('AggregatorNodeClient', () => {
       const result = await aggregator.processBatch(4n);
       
       expect(result.success).toBe(true);
-      expect(aggregator['executeTransaction']).toHaveBeenCalledWith('submitHashroot', [
+      expect(aggregator.executeTransaction).toHaveBeenCalledWith('submitHashroot', [
         4n,
         expect.any(Uint8Array)
       ]);
@@ -230,7 +272,7 @@ describe('AggregatorNodeClient', () => {
     
     it('should handle already processed batches', async () => {
       // Mock getBatch to return a processed batch
-      aggregator['getBatch'] = jest.fn().mockResolvedValue({
+      aggregator.getBatch = jest.fn().mockResolvedValue({
         requests: [],
         processed: true,
         hashroot: '0x5678'
@@ -240,7 +282,7 @@ describe('AggregatorNodeClient', () => {
       
       expect(result.success).toBe(false);
       expect(result.error?.message).toContain('already processed');
-      expect(aggregator['executeTransaction']).not.toHaveBeenCalled();
+      expect(aggregator.executeTransaction).not.toHaveBeenCalled();
     });
     
     it('should reject processing out-of-sequence batches', async () => {
@@ -249,7 +291,7 @@ describe('AggregatorNodeClient', () => {
       
       expect(result.success).toBe(false);
       expect(result.error?.message).toContain('cannot be processed yet');
-      expect(aggregator['executeTransaction']).not.toHaveBeenCalled();
+      expect(aggregator.executeTransaction).not.toHaveBeenCalled();
     });
   });
   
@@ -264,13 +306,13 @@ describe('AggregatorNodeClient', () => {
     
     it('should start auto batch processing', () => {
       aggregator.startAutoBatchProcessing();
-      expect(aggregator['batchProcessingTimer']).toBeDefined();
+      expect(aggregator.batchProcessingTimer).toBeDefined();
     });
     
     it('should stop auto batch processing', () => {
       aggregator.startAutoBatchProcessing();
       aggregator.stopAutoBatchProcessing();
-      expect(aggregator['batchProcessingTimer']).toBeUndefined();
+      expect(aggregator.batchProcessingTimer).toBeUndefined();
     });
     
     it('should process batches on timer', async () => {
@@ -283,7 +325,8 @@ describe('AggregatorNodeClient', () => {
       
       // Directly call the processing function instead of waiting for the timer
       // This simulates what would happen when the timer fires
-      const processNextBatchFn = (aggregator as any).processNextBatch || 
+      type ProcessNextBatchFn = () => Promise<void>;
+      const processNextBatchFn: ProcessNextBatchFn = (aggregator as any).processNextBatch || 
                                (async () => {
                                  const nextBatch = await aggregator.getNextBatchToProcess();
                                  if (nextBatch !== null) {
@@ -314,7 +357,7 @@ describe('AggregatorNodeClient', () => {
     
     it('should return null when all batches are processed', async () => {
       // Mock equal latest batch and latest processed
-      aggregator['getLatestBatchNumber'] = jest.fn().mockResolvedValue(3n);
+      aggregator.getLatestBatchNumber = jest.fn().mockResolvedValue(3n);
       
       const nextBatch = await aggregator.getNextBatchToProcess();
       expect(nextBatch).toBeNull();
@@ -324,7 +367,7 @@ describe('AggregatorNodeClient', () => {
   describe('merkleProofGeneration', () => {
     it('should generate a Merkle proof', async () => {
       // Mock a processed batch
-      aggregator['getBatch'] = jest.fn().mockResolvedValue({
+      aggregator.getBatch = jest.fn().mockResolvedValue({
         requests: [
           { requestID: '1', payload: '0x11', authenticator: '0x22' },
           { requestID: '2', payload: '0x33', authenticator: '0x44' }
@@ -348,7 +391,7 @@ describe('AggregatorNodeClient', () => {
     
     it('should handle requests not found in the merkle tree', async () => {
       // First mock the getBatch method to return processed batch data
-      aggregator['getBatch'] = jest.fn().mockResolvedValue({
+      aggregator.getBatch = jest.fn().mockResolvedValue({
         requests: [
           { requestID: '1', payload: '0x11', authenticator: '0x22' },
           { requestID: '2', payload: '0x33', authenticator: '0x44' }
@@ -360,7 +403,7 @@ describe('AggregatorNodeClient', () => {
       // Override the generateMerkleProof method to look for the request ID specifically
       const originalImplementation = aggregator.generateMerkleProof;
       aggregator.generateMerkleProof = jest.fn().mockImplementation(
-        async (batchNumber: any, requestID: any) => {
+        async (batchNumber: bigint | string, requestID: bigint | string): Promise<{ proof: string[], value: string } | null> => {
           // If the requestID is not 1 or 2, return null (not found in our mock data)
           if (requestID !== 1n && requestID !== 2n && requestID !== '1' && requestID !== '2') {
             return null;
