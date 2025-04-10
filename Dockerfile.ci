@@ -15,12 +15,12 @@ RUN apt-get install -y nodejs && rm -rf /var/lib/apt/lists/*
 # Create a workspace
 WORKDIR /workspace
 
-# Copy workflow scripts
-COPY .github/workflows /workspace/.github/workflows
-COPY scripts/run-ci-locally.sh /workspace/scripts/
+# Copy the entire repository
+COPY . /workspace/
 
-# Make the script executable
+# Make scripts executable
 RUN chmod +x /workspace/scripts/run-ci-locally.sh
+RUN chmod +x /workspace/scripts/manual-e2e-test.sh
 
 # Set entrypoint
 ENTRYPOINT ["/workspace/scripts/run-ci-locally.sh"]
