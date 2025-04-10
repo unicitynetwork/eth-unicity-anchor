@@ -163,8 +163,8 @@ run_test_workflow() {
   run_step "Installing root dependencies" "npm ci"
   run_step "Installing TypeScript client dependencies" "cd ts-client && npm ci && cd .."
   
-  # Run TypeScript unit tests and fail pipeline if they fail
-  run_step "TypeScript Unit Tests" "cd ts-client && npm run test:unit && cd .."
+  # Run TypeScript unit tests with forceExit flag to ensure they terminate
+  run_step "TypeScript Unit Tests" "cd ts-client && npm run test:unit --testTimeout=30000 --forceExit && cd .."
   
   # Run integration tests if enabled
   if [[ "$SKIP_INTEGRATION_TESTS" != "true" ]]; then

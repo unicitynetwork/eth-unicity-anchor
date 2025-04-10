@@ -7,7 +7,7 @@
   "scripts": {
     "build": "tsc",
     "test": "jest",
-    "test:unit": "jest tests/*.test.ts",
+    "test:unit": "jest --config=jest.unit.config.js",
     "test:utils": "jest tests/utils.test.ts",
     "test:integration": "jest --config=jest.integration.config.js",
     "test:all": "npm run test:unit && npm run test:integration",
