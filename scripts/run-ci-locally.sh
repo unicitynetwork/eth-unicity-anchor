@@ -163,8 +163,8 @@ run_test_workflow() {
   run_step "Installing root dependencies" "npm ci"
   run_step "Installing TypeScript client dependencies" "cd ts-client && npm ci && cd .."
   
-  # Run TypeScript unit tests but allow failures
-  run_step "TypeScript Unit Tests" "cd ts-client && npm run test:unit && cd .." true
+  # Run TypeScript unit tests and fail pipeline if they fail
+  run_step "TypeScript Unit Tests" "cd ts-client && npm run test:unit && cd .."
   
   # Run integration tests if enabled
   if [[ "$SKIP_INTEGRATION_TESTS" != "true" ]]; then
@@ -174,9 +174,9 @@ run_test_workflow() {
     
     # Try to find the script in different locations
     if [ -f "./scripts/manual-e2e-test.sh" ]; then
-      run_step "TypeScript Integration Tests" "VERBOSE=$VERBOSE ./scripts/manual-e2e-test.sh" true
+      run_step "TypeScript Integration Tests" "VERBOSE=$VERBOSE ./scripts/manual-e2e-test.sh" 
     elif [ -f "/workspace/scripts/manual-e2e-test.sh" ]; then
-      run_step "TypeScript Integration Tests" "VERBOSE=$VERBOSE /workspace/scripts/manual-e2e-test.sh" true
+      run_step "TypeScript Integration Tests" "VERBOSE=$VERBOSE /workspace/scripts/manual-e2e-test.sh" 
     else
       echo -e "${RED}❌ Could not find manual-e2e-test.sh script in any expected location${NC}"
       echo -e "Current directory: $(pwd)"
@@ -205,8 +205,8 @@ run_nightly_workflow() {
   run_step "Installing root dependencies" "npm ci"
   run_step "Installing TypeScript client dependencies" "cd ts-client && npm ci && cd .."
   
-  # Run TypeScript unit tests with coverage but allow failures
-  run_step "TypeScript Tests with Coverage" "cd ts-client && npm run test:unit -- --coverage && cd .." true
+  # Run TypeScript unit tests with coverage and fail pipeline if they fail
+  run_step "TypeScript Tests with Coverage" "cd ts-client && npm run test:unit -- --coverage && cd .."
   
   # Run integration tests if enabled
   if [[ "$SKIP_INTEGRATION_TESTS" != "true" ]]; then
@@ -216,9 +216,9 @@ run_nightly_workflow() {
     
     # Try to find the script in different locations
     if [ -f "./scripts/manual-e2e-test.sh" ]; then
-      run_step "TypeScript Integration Tests" "VERBOSE=$VERBOSE ./scripts/manual-e2e-test.sh" true
+      run_step "TypeScript Integration Tests" "VERBOSE=$VERBOSE ./scripts/manual-e2e-test.sh" 
     elif [ -f "/workspace/scripts/manual-e2e-test.sh" ]; then
-      run_step "TypeScript Integration Tests" "VERBOSE=$VERBOSE /workspace/scripts/manual-e2e-test.sh" true
+      run_step "TypeScript Integration Tests" "VERBOSE=$VERBOSE /workspace/scripts/manual-e2e-test.sh" 
     else
       echo -e "${RED}❌ Could not find manual-e2e-test.sh script in any expected location${NC}"
       echo -e "Current directory: $(pwd)"
