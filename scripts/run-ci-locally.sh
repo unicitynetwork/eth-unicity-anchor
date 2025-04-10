@@ -6,12 +6,14 @@ set -e  # Exit on error
 # Parse command line arguments
 CI_WORKFLOW="test"  # Default to test workflow
 VERBOSE=false
+SKIP_INTEGRATION_TESTS=true  # Skip integration tests by default
 
 print_usage() {
   echo "Usage: $0 [options]"
   echo "Options:"
   echo "  --workflow=WORKFLOW  Specify the workflow to run (test, nightly)"
   echo "  --verbose            Enable verbose output"
+  echo "  --integration        Enable integration tests (requires Anvil)"
   echo "  --help               Show this help message"
 }
 
@@ -22,6 +24,9 @@ for arg in "$@"; do
       ;;
     --verbose)
       VERBOSE=true
+      ;;
+    --integration)
+      SKIP_INTEGRATION_TESTS=false
       ;;
     --help)
       print_usage
@@ -103,6 +108,21 @@ check_tools() {
     echo -e "${YELLOW}⚠️ Node.js version is less than 20.0.0 (found $node_version). The CI uses Node.js 20.${NC}"
   fi
   
+  # Check for Anvil if integration tests are enabled
+  if [[ "$SKIP_INTEGRATION_TESTS" != "true" ]]; then
+    if ! command -v anvil &> /dev/null; then
+      echo -e "${RED}❌ Anvil not found, but required for integration tests. Please install it first: https://getfoundry.sh/${NC}"
+      exit 1
+    fi
+    
+    # Check if port 8545 is already in use
+    if ss -tln | grep ":8545 " > /dev/null; then
+      echo -e "${RED}❌ Port 8545 is already in use. Integration tests need this port for Anvil.${NC}"
+      echo -e "${RED}   Please stop any Ethereum nodes or services using this port and try again.${NC}"
+      exit 1
+    fi
+  fi
+  
   echo -e "${GREEN}✅ All required tools found${NC}"
 }
 
@@ -128,14 +148,15 @@ run_test_workflow() {
   run_step "Installing root dependencies" "npm ci"
   run_step "Installing TypeScript client dependencies" "cd ts-client && npm ci && cd .."
   
-  # Only run utils test since it's the most stable
-  run_step "TypeScript Utility Tests" "cd ts-client && npm run test:utils && cd .."
+  # Run all TypeScript unit tests
+  run_step "TypeScript Unit Tests" "cd ts-client && npm run test:unit && cd .."
   
-  # Note: Skipping other TypeScript tests that have issues with TypeScript typings
-  echo -e "${YELLOW}⚠️ Skipping some TypeScript tests that need type fixes${NC}"
-  
-  # Skip integration tests for now
-  echo -e "${YELLOW}⚠️ Skipping integration tests - requires local Ethereum node${NC}"
+  # Run integration tests if enabled
+  if [[ "$SKIP_INTEGRATION_TESTS" != "true" ]]; then
+    run_step "TypeScript Integration Tests" "chmod +x ./scripts/manual-e2e-test.sh && VERBOSE=$VERBOSE ./scripts/manual-e2e-test.sh"
+  else
+    echo -e "${YELLOW}⚠️ Skipping integration tests - use --integration to enable them${NC}"
+  fi
   
   echo -e "\n${GREEN}✅ Test workflow completed successfully!${NC}"
 }
@@ -153,14 +174,15 @@ run_nightly_workflow() {
   run_step "Installing root dependencies" "npm ci"
   run_step "Installing TypeScript client dependencies" "cd ts-client && npm ci && cd .."
   
-  # Only run utils test with coverage
-  run_step "TypeScript Utility Tests" "cd ts-client && npm run test:utils -- --coverage && cd .."
+  # Run all TypeScript tests with coverage
+  run_step "TypeScript Tests with Coverage" "cd ts-client && npm run test:unit -- --coverage && cd .."
   
-  # Note: Skipping other TypeScript tests that have issues with TypeScript typings
-  echo -e "${YELLOW}⚠️ Skipping some TypeScript tests that need type fixes${NC}"
-  
-  # Skip integration tests for now
-  echo -e "${YELLOW}⚠️ Skipping integration tests - requires local Ethereum node${NC}"
+  # Run integration tests if enabled
+  if [[ "$SKIP_INTEGRATION_TESTS" != "true" ]]; then
+    run_step "TypeScript Integration Tests" "chmod +x ./scripts/manual-e2e-test.sh && VERBOSE=$VERBOSE ./scripts/manual-e2e-test.sh"
+  else
+    echo -e "${YELLOW}⚠️ Skipping integration tests - use --integration to enable them${NC}"
+  fi
   
   echo -e "\n${GREEN}✅ Nightly workflow completed successfully!${NC}"
 }
