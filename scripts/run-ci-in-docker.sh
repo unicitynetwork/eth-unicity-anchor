@@ -8,6 +8,7 @@ CI_WORKFLOW="test"  # Default to test workflow
 VERBOSE=false
 BUILD_ONLY=false
 DOCKER_IMAGE="eth-unicity-anchor-ci"
+RUN_INTEGRATION=false  # Default to not run integration tests
 
 print_usage() {
   echo "Usage: $0 [options]"
@@ -16,6 +17,7 @@ print_usage() {
   echo "  --verbose            Enable verbose output"
   echo "  --build-only         Only build the Docker image, don't run tests"
   echo "  --image=NAME         Specify a custom Docker image name (default: eth-unicity-anchor-ci)"
+  echo "  --integration        Enable integration tests (requires Anvil)"
   echo "  --help               Show this help message"
 }
 
@@ -32,6 +34,9 @@ for arg in "$@"; do
       ;;
     --image=*)
       DOCKER_IMAGE="${arg#*=}"
+      ;;
+    --integration)
+      RUN_INTEGRATION=true
       ;;
     --help)
       print_usage
@@ -76,7 +81,11 @@ echo -e "${BLUE}🚀 Running CI workflow in Docker: $CI_WORKFLOW${NC}"
 # Run Docker container with appropriate flags
 DOCKER_ARGS=""
 if $VERBOSE; then
-  DOCKER_ARGS="--verbose"
+  DOCKER_ARGS="$DOCKER_ARGS --verbose"
+fi
+
+if $RUN_INTEGRATION; then
+  DOCKER_ARGS="$DOCKER_ARGS --integration"
 fi
 
 docker run --rm "$DOCKER_IMAGE" --workflow="$CI_WORKFLOW" $DOCKER_ARGS
