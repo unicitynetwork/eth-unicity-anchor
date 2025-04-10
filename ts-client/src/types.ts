@@ -88,6 +88,8 @@ export interface TransactionResult {
   // Additional fields for batch operations
   successCount?: bigint;      // Number of successfully processed commitments
   batchNumber?: bigint;       // Batch number created (for createBatch operations)
+  // Additional fields for extended information
+  message?: string;           // Informational message about the transaction
 }
 
 /**
