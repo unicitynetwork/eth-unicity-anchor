@@ -179,4 +179,256 @@ describe('End-to-End Integration Tests', () => {
       console.log('No unprocessed batches found');
     }
   });
+  
+  it('should submit multiple commitments in a single transaction', async () => {
+    if (!contractAddress) {
+      console.log('Skipping test due to missing CONTRACT_ADDRESS');
+      return;
+    }
+    
+    // Create multiple commitments
+    const commitments = [];
+    const count = 5;
+    
+    for (let i = 0; i < count; i++) {
+      const requestId = BigInt(Date.now() + i);
+      const payload = ethers.toUtf8Bytes(`batch payload ${i}`);
+      const authenticator = ethers.toUtf8Bytes(`batch auth ${i}`);
+      
+      commitments.push({
+        requestID: requestId,
+        payload,
+        authenticator
+      });
+    }
+    
+    console.log(`Submitting ${count} commitments in a single transaction...`);
+    try {
+      const { successCount, result } = await gatewayClient.submitCommitments(commitments);
+      console.log(`Successfully submitted ${successCount} commitments`);
+      console.log('Transaction result:', result);
+      
+      expect(result.success).toBe(true);
+      expect(successCount).toBe(BigInt(count));
+      
+      // Create a batch with the submitted commitments
+      const { batchNumber, result: batchResult } = await gatewayClient.createBatch();
+      console.log('Batch created with number:', batchNumber.toString());
+      expect(batchResult.success).toBe(true);
+      
+      // Get batch info
+      const batchInfo = await nodeClient.getBatch(batchNumber);
+      console.log('Batch info:', batchInfo);
+      
+      // Expect the batch to contain our requests
+      expect(batchInfo.requests.length).toBe(count);
+      expect(batchInfo.processed).toBe(false);
+    } catch (error) {
+      console.error('Error with batch submission:', error);
+      throw error;
+    }
+  }, 30000);
+  
+  it('should submit commitments and create batch in a single transaction', async () => {
+    if (!contractAddress) {
+      console.log('Skipping test due to missing CONTRACT_ADDRESS');
+      return;
+    }
+    
+    // Create multiple commitments
+    const commitments = [];
+    const count = 5;
+    
+    for (let i = 0; i < count; i++) {
+      const requestId = BigInt(Date.now() + 1000 + i); // Different range from previous test
+      const payload = ethers.toUtf8Bytes(`combined payload ${i}`);
+      const authenticator = ethers.toUtf8Bytes(`combined auth ${i}`);
+      
+      commitments.push({
+        requestID: requestId,
+        payload,
+        authenticator
+      });
+    }
+    
+    console.log(`Submitting ${count} commitments and creating batch in a single transaction...`);
+    try {
+      const { batchNumber, successCount, result } = await gatewayClient.submitAndCreateBatch(commitments);
+      console.log(`Successfully submitted ${successCount} commitments and created batch #${batchNumber}`);
+      console.log('Transaction result:', result);
+      
+      expect(result.success).toBe(true);
+      expect(successCount).toBe(BigInt(count));
+      expect(batchNumber).toBeGreaterThan(0n);
+      
+      // Get batch info
+      const batchInfo = await nodeClient.getBatch(batchNumber);
+      console.log('Batch info:', batchInfo);
+      
+      // Expect the batch to contain our requests
+      expect(batchInfo.requests.length).toBe(count);
+      expect(batchInfo.processed).toBe(false);
+      
+      // Submit a hashroot to process the batch
+      const hashroot = ethers.toUtf8Bytes('combined test hashroot');
+      console.log('Submitting hashroot:', ethers.hexlify(hashroot));
+      const submitResult = await nodeClient.submitHashroot(batchNumber, hashroot);
+      expect(submitResult.success).toBe(true);
+      
+      // Check if the batch is now processed
+      const updatedBatchInfo = await nodeClient.getBatch(batchNumber);
+      console.log('Updated batch info:', updatedBatchInfo);
+      expect(updatedBatchInfo.processed).toBe(true);
+      
+      // The hashroot comes back as a hex string, so we need to compare hex strings
+      const expectedHashrootHex = ethers.hexlify(hashroot);
+      expect(updatedBatchInfo.hashroot).toEqual(expectedHashrootHex);
+    } catch (error) {
+      console.error('Error with combined submission and batch creation:', error);
+      throw error;
+    }
+  }, 30000);
+  
+  it('should demonstrate performance improvements with batch operations', async () => {
+    if (!contractAddress) {
+      console.log('Skipping test due to missing CONTRACT_ADDRESS');
+      return;
+    }
+    
+    // Number of commitments to test with
+    const count = 5;
+    
+    // Create identical commitments for fair comparison
+    const baseCommitments = [];
+    for (let i = 0; i < count; i++) {
+      const requestId = BigInt(Date.now() + 2000 + i); // Different range from previous tests
+      const payload = ethers.toUtf8Bytes(`perf payload ${i}`);
+      const authenticator = ethers.toUtf8Bytes(`perf auth ${i}`);
+      
+      baseCommitments.push({
+        requestID: requestId,
+        payload,
+        authenticator
+      });
+    }
+    
+    // Performance test 1: Individual submissions (old way)
+    console.log('\n===== PERFORMANCE TEST: INDIVIDUAL SUBMISSIONS =====');
+    let individualStart = Date.now();
+    let totalIndividualGas = BigInt(0);
+    
+    try {
+      // Use legacy method that submits each commitment individually
+      const results = await gatewayClient.submitMultipleCommitments(baseCommitments);
+      
+      // Sum up all the gas used
+      for (const item of results) {
+        if (item.result.success && item.result.gasUsed) {
+          totalIndividualGas += item.result.gasUsed;
+        }
+      }
+      
+      // Create batch separately
+      const { result: batchResult } = await gatewayClient.createBatch();
+      if (batchResult.success && batchResult.gasUsed) {
+        totalIndividualGas += batchResult.gasUsed;
+      }
+      
+      const individualElapsed = Date.now() - individualStart;
+      console.log(`Individual submissions completed in ${individualElapsed}ms`);
+      console.log(`Total gas used: ${totalIndividualGas.toString()}`);
+    } catch (error) {
+      console.error('Error in individual submissions test:', error);
+    }
+    
+    // Create new commitments with different IDs for batch submission
+    const batchCommitments = [];
+    for (let i = 0; i < count; i++) {
+      const requestId = BigInt(Date.now() + 3000 + i);
+      const payload = ethers.toUtf8Bytes(`perf payload ${i}`);
+      const authenticator = ethers.toUtf8Bytes(`perf auth ${i}`);
+      
+      batchCommitments.push({
+        requestID: requestId,
+        payload,
+        authenticator
+      });
+    }
+    
+    // Performance test 2: submitCommitments (new way)
+    console.log('\n===== PERFORMANCE TEST: BATCH SUBMISSIONS =====');
+    let batchStart = Date.now();
+    let batchSubmissionGas = BigInt(0);
+    
+    try {
+      // Submit all commitments in a single transaction
+      const { result } = await gatewayClient.submitCommitments(batchCommitments);
+      
+      if (result.success && result.gasUsed) {
+        batchSubmissionGas = result.gasUsed;
+      }
+      
+      // Create batch separately
+      const { result: batchResult } = await gatewayClient.createBatch();
+      if (batchResult.success && batchResult.gasUsed) {
+        batchSubmissionGas += batchResult.gasUsed;
+      }
+      
+      const batchElapsed = Date.now() - batchStart;
+      console.log(`Batch submission completed in ${batchElapsed}ms`);
+      console.log(`Total gas used: ${batchSubmissionGas.toString()}`);
+    } catch (error) {
+      console.error('Error in batch submissions test:', error);
+    }
+    
+    // Create new commitments with different IDs for combined operation
+    const combinedCommitments = [];
+    for (let i = 0; i < count; i++) {
+      const requestId = BigInt(Date.now() + 4000 + i);
+      const payload = ethers.toUtf8Bytes(`perf payload ${i}`);
+      const authenticator = ethers.toUtf8Bytes(`perf auth ${i}`);
+      
+      combinedCommitments.push({
+        requestID: requestId,
+        payload,
+        authenticator
+      });
+    }
+    
+    // Performance test 3: submitAndCreateBatch (combined way)
+    console.log('\n===== PERFORMANCE TEST: COMBINED SUBMISSION AND BATCH CREATION =====');
+    let combinedStart = Date.now();
+    let combinedGas = BigInt(0);
+    
+    try {
+      // Submit and create batch in a single transaction
+      const { result } = await gatewayClient.submitAndCreateBatch(combinedCommitments);
+      
+      if (result.success && result.gasUsed) {
+        combinedGas = result.gasUsed;
+      }
+      
+      const combinedElapsed = Date.now() - combinedStart;
+      console.log(`Combined operation completed in ${combinedElapsed}ms`);
+      console.log(`Total gas used: ${combinedGas.toString()}`);
+      
+      // Print summary
+      console.log('\n===== PERFORMANCE COMPARISON SUMMARY =====');
+      console.log(`Individual submissions gas: ${totalIndividualGas.toString()}`);
+      console.log(`Batch submission gas: ${batchSubmissionGas.toString()}`);
+      console.log(`Combined operation gas: ${combinedGas.toString()}`);
+      
+      if (totalIndividualGas > 0 && batchSubmissionGas > 0) {
+        const batchSavingsPercent = 100 - (Number(batchSubmissionGas) * 100 / Number(totalIndividualGas));
+        console.log(`Batch submission gas savings: ${batchSavingsPercent.toFixed(2)}%`);
+      }
+      
+      if (totalIndividualGas > 0 && combinedGas > 0) {
+        const combinedSavingsPercent = 100 - (Number(combinedGas) * 100 / Number(totalIndividualGas));
+        console.log(`Combined operation gas savings: ${combinedSavingsPercent.toFixed(2)}%`);
+      }
+    } catch (error) {
+      console.error('Error in combined operation test:', error);
+    }
+  }, 60000); // Increase timeout for this comprehensive test
 });
