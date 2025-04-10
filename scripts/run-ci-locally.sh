@@ -126,10 +126,10 @@ run_test_workflow() {
   
   # Install dependencies for both root and TypeScript client
   run_step "Installing root dependencies" "npm ci"
-  run_step "Installing TypeScript client dependencies" "cd ts-client && npm ci"
+  run_step "Installing TypeScript client dependencies" "cd ts-client && npm ci && cd .."
   
   # Only run utils test since it's the most stable
-  run_step "TypeScript Utility Tests" "cd ts-client && npm run test:utils"
+  run_step "TypeScript Utility Tests" "cd ts-client && npm run test:utils && cd .."
   
   # Note: Skipping other TypeScript tests that have issues with TypeScript typings
   echo -e "${YELLOW}⚠️ Skipping some TypeScript tests that need type fixes${NC}"
@@ -151,10 +151,10 @@ run_nightly_workflow() {
   
   # Install dependencies for both root and TypeScript client
   run_step "Installing root dependencies" "npm ci"
-  run_step "Installing TypeScript client dependencies" "cd ts-client && npm ci"
+  run_step "Installing TypeScript client dependencies" "cd ts-client && npm ci && cd .."
   
   # Only run utils test with coverage
-  run_step "TypeScript Utility Tests" "cd ts-client && npm run test:utils -- --coverage"
+  run_step "TypeScript Utility Tests" "cd ts-client && npm run test:utils -- --coverage && cd .."
   
   # Note: Skipping other TypeScript tests that have issues with TypeScript typings
   echo -e "${YELLOW}⚠️ Skipping some TypeScript tests that need type fixes${NC}"
