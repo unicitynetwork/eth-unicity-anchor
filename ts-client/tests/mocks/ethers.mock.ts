@@ -16,12 +16,23 @@ class MockProvider {
     return Promise.resolve({});
   }
   
-  getTransactionReceipt() {
+  getTransactionReceipt(hash?: string) {
+    // In ethers.js, this method returns null for non-existent transactions
+    if (hash === '0xnonexistent') {
+      return Promise.resolve(null);
+    }
+    
     return Promise.resolve({
       hash: '0xmocktx',
       blockNumber: 12345,
       gasUsed: BigInt(100000),
-      logs: []
+      logs: [],
+      status: 1, // Success
+      confirmations: 10,
+      blockHash: '0xmockblockhash',
+      to: '0xmockaddress',
+      from: '0xmocksender',
+      transactionIndex: 1
     });
   }
   
@@ -150,6 +161,24 @@ export const ethers = {
   // Utility functions
   toUtf8Bytes: (text: string) => new TextEncoder().encode(text),
   hexlify: (bytes: Uint8Array) => '0x' + Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join(''),
+  
+  // Add missing functions used in utils.ts
+  getBytes: (hexString: string) => {
+    // Simple implementation to convert hex to bytes
+    const hex = hexString.startsWith('0x') ? hexString.slice(2) : hexString;
+    const bytes = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < bytes.length; i++) {
+      bytes[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
+    }
+    return bytes;
+  },
+  
+  keccak256: (data: Uint8Array | string) => {
+    // Mock implementation that returns a predictable hash
+    // In a real implementation, this would compute the keccak256 hash
+    return '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef';
+  },
+  
   Interface: jest.fn(() => ({
     parseLog: () => ({ name: 'MockEvent', args: { successCount: BigInt(3) } })
   }))
