@@ -214,7 +214,7 @@ describe('End-to-End Integration Tests', () => {
       console.log('Transaction result:', result);
       
       expect(result.success).toBe(true);
-      // INTENTIONAL FAILURE: expecting 10 but only 5 will be submitted
+      // Verify the success count matches the number of commitments
       expect(successCount).toBe(BigInt(count));
       
       // Create a batch with the submitted commitments
@@ -264,7 +264,7 @@ describe('End-to-End Integration Tests', () => {
       console.log('Transaction result:', result);
       
       expect(result.success).toBe(true);
-      // INTENTIONAL FAILURE: expecting 10 but only 5 will be submitted
+      // Verify the success count matches the number of commitments
       expect(successCount).toBe(BigInt(count));
       expect(batchNumber).toBeGreaterThan(0n);
       
