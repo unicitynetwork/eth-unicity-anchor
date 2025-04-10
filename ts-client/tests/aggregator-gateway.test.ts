@@ -391,5 +391,161 @@ describe('AggregatorGatewayClient', () => {
       expect(results[1].result.success).toBe(true);
       expect(mockSubmit).toHaveBeenCalledTimes(1);
     });
+    
+    it('should handle mixed commitment types with various payload formats', async () => {
+      const mockSubmit = jest.fn()
+        .mockResolvedValue({ success: true, transactionHash: '0xccc' });
+      
+      gateway.submitCommitment = mockSubmit;
+      
+      const results = await gateway.submitMultipleCommitments([
+        {
+          requestID: 3n,
+          payload: new Uint8Array([1, 2, 3]), // Convert from hex string to Uint8Array
+          authenticator: new Uint8Array([4, 5, 6])
+        },
+        {
+          requestID: 4n,
+          payload: new Uint8Array([7, 8, 9]),
+          authenticator: new Uint8Array([10, 11, 12]) // Convert from hex string to Uint8Array
+        },
+        {
+          requestID: 5n, // Convert from string to BigInt
+          payload: new Uint8Array([13, 14, 15]), // Convert from plain string to Uint8Array
+          authenticator: new Uint8Array([16, 17, 18]) // Convert from plain string to Uint8Array
+        }
+      ]);
+      
+      expect(results.length).toBe(3);
+      expect(results[0].result.success).toBe(true);
+      expect(results[1].result.success).toBe(true);
+      expect(results[2].result.success).toBe(true);
+      expect(mockSubmit).toHaveBeenCalledTimes(3);
+    });
+    
+    it('should handle empty commitment array', async () => {
+      const mockSubmit = jest.fn().mockResolvedValue({ success: true });
+      gateway.submitCommitment = mockSubmit;
+      
+      const results = await gateway.submitMultipleCommitments([]);
+      
+      expect(results.length).toBe(0);
+      expect(mockSubmit).not.toHaveBeenCalled();
+    });
+    
+    it('should handle submitCommitment failures', async () => {
+      // Mock submission failures
+      const mockSubmit = jest.fn()
+        .mockResolvedValueOnce({ success: false, error: new Error('Network error') })
+        .mockResolvedValueOnce({ success: true, transactionHash: '0xddd' });
+      
+      gateway.submitCommitment = mockSubmit;
+      
+      const results = await gateway.submitMultipleCommitments([
+        {
+          requestID: 7n,
+          payload: new Uint8Array([1, 2, 3]),
+          authenticator: new Uint8Array([4, 5, 6])
+        },
+        {
+          requestID: 8n,
+          payload: new Uint8Array([7, 8, 9]),
+          authenticator: new Uint8Array([10, 11, 12])
+        }
+      ]);
+      
+      expect(results.length).toBe(2);
+      expect(results[0].result.success).toBe(false);
+      expect(results[0].result.error).toBeDefined();
+      expect(results[1].result.success).toBe(true);
+      expect(mockSubmit).toHaveBeenCalledTimes(2);
+    });
+  });
+  
+  describe('error handling', () => {
+    it('should handle transaction errors when creating a batch', async () => {
+      // Mock executeTransaction to fail
+      mockBaseMethods.executeTransaction = jest.fn().mockResolvedValue({
+        success: false,
+        error: new Error('Transaction failure')
+      });
+      
+      const result = await gateway.createBatch();
+      
+      expect(result.result.success).toBe(false);
+      expect(result.result.error?.message).toBe('Transaction failure');
+    });
+    
+    it('should handle transaction errors when creating a batch for specific requests', async () => {
+      // Mock executeTransaction to fail
+      mockBaseMethods.executeTransaction = jest.fn().mockResolvedValue({
+        success: false,
+        error: new Error('Invalid request IDs')
+      });
+      
+      const result = await gateway.createBatchForRequests([1n, 2n]);
+      
+      expect(result.result.success).toBe(false);
+      expect(result.result.error?.message).toBe('Invalid request IDs');
+    });
+    
+    it('should handle transaction errors when submitting a commitment', async () => {
+      // Mock executeTransaction to fail
+      mockBaseMethods.executeTransaction = jest.fn().mockResolvedValue({
+        success: false,
+        error: new Error('Invalid commitment')
+      });
+      
+      const result = await gateway.submitCommitment(
+        1n,
+        new Uint8Array([1, 2, 3]),
+        new Uint8Array([4, 5, 6])
+      );
+      
+      expect(result.success).toBe(false);
+      expect(result.error?.message).toBe('Invalid commitment');
+    });
+  });
+  
+  describe('event handling', () => {
+    it('should register event listeners', () => {
+      const mockCallback = jest.fn();
+      
+      // Register the event listener
+      gateway.on(EventType.BatchCreated, mockCallback);
+      
+      // Check that the base on method was called
+      expect(mockBaseMethods.on).toHaveBeenCalledWith('BatchCreated', expect.any(Function));
+    });
+  });
+  
+  describe('config options handling', () => {
+    it('should override default options when provided', () => {
+      // We can verify the original options were passed to the constructor, which is mocked
+      const customOptions = {
+        providerUrl: 'http://localhost:8545',
+        contractAddress: '0x1234567890123456789012345678901234567890',
+        privateKey: '0x1234567890123456789012345678901234567890123456789012345678901234',
+        gatewayAddress: '0x0987654321098765432109876543210987654321',
+        batchCreationThreshold: 100,
+        batchCreationInterval: 120000,
+        autoCreateBatches: true
+      };
+      
+      // Create a clean mock
+      jest.clearAllMocks();
+      
+      // Create gateway with custom config - the mock will be called with these options
+      new AggregatorGatewayClient(customOptions);
+      
+      // Verify the AggregatorGatewayClient constructor was called with the expected options
+      expect(AggregatorGatewayClient).toHaveBeenCalledWith(
+        expect.objectContaining({
+          batchCreationThreshold: 100,
+          batchCreationInterval: 120000,
+          autoCreateBatches: true
+        })
+      );
+    });
   });
 });

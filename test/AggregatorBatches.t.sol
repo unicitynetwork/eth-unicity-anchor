@@ -9,6 +9,7 @@ contract AggregatorBatchesTest is Test {
     AggregatorBatches public aggregator;
     address public owner;
     address[] public trustedAggregators;
+    address public nonAggregator;
 
     function setUp() public {
         // Setup test accounts
@@ -16,6 +17,7 @@ contract AggregatorBatchesTest is Test {
         address aggregator1 = address(0x1);
         address aggregator2 = address(0x2);
         address aggregator3 = address(0x3);
+        nonAggregator = address(0x999);
 
         // Set up trusted aggregators
         trustedAggregators = new address[](3);
@@ -82,8 +84,7 @@ contract AggregatorBatchesTest is Test {
         aggregator.submitHashroot(batchNumber, hashroot);
 
         // Now batch should be processed
-        (IAggregatorBatches.CommitmentRequest[] memory requests2, bool processed2, bytes memory storedHashroot) =
-            aggregator.getBatch(batchNumber);
+        (, bool processed2, bytes memory storedHashroot) = aggregator.getBatch(batchNumber);
         assertEq(processed2, true, "Batch should be processed after 2 votes");
         assertEq(string(storedHashroot), string(hashroot), "Hashroot should match");
 
@@ -270,7 +271,7 @@ contract AggregatorBatchesTest is Test {
         batchRequestIds[0] = testId;
 
         vm.prank(trustedAggregators[0]);
-        uint256 batchNumber = aggregator.createBatchForRequests(batchRequestIds);
+        aggregator.createBatchForRequests(batchRequestIds);
 
         // Request should no longer be in the unprocessed pool
         isUnprocessed = aggregator.isRequestUnprocessed(testId);
@@ -362,5 +363,492 @@ contract AggregatorBatchesTest is Test {
 
         assertTrue(found102, "Request 102 should be in the unprocessed pool");
         assertTrue(found104, "Request 104 should be in the unprocessed pool");
+    }
+
+    // New tests to increase coverage
+
+    function testEmptyBatchCreation() public {
+        // Test with no commitments in the pool
+        vm.prank(trustedAggregators[0]);
+        uint256 batchNumber = aggregator.createBatch();
+
+        // Should return 0 if no unprocessed commitments exist
+        assertEq(batchNumber, 0, "Should return 0 for empty pool");
+
+        // Test with empty request array
+        uint256[] memory emptyRequests = new uint256[](0);
+        vm.prank(trustedAggregators[0]);
+        batchNumber = aggregator.createBatchForRequests(emptyRequests);
+
+        // Should return 0 if no requests provided
+        assertEq(batchNumber, 0, "Should return 0 for empty request array");
+    }
+
+    function testCreateBatchWithInvalidRequests() public {
+        // Add some valid commitments
+        vm.prank(trustedAggregators[0]);
+        aggregator.submitCommitment(100, bytes("test"), bytes("test"));
+
+        // Create array with both valid and invalid request IDs
+        uint256[] memory requestIDs = new uint256[](3);
+        requestIDs[0] = 100; // valid
+        requestIDs[1] = 999; // invalid - doesn't exist
+        requestIDs[2] = 888; // invalid - doesn't exist
+
+        // Try to create batch - should only include valid requests
+        vm.prank(trustedAggregators[0]);
+        uint256 batchNumber = aggregator.createBatchForRequests(requestIDs);
+
+        // Verify batch was created with only the valid request
+        assertEq(batchNumber, 1, "Batch should be created with just the valid request");
+
+        // Get batch and verify it contains only our valid commitment
+        (IAggregatorBatches.CommitmentRequest[] memory requests,,) = aggregator.getBatch(batchNumber);
+        assertEq(requests.length, 1, "Batch should contain only 1 valid request");
+        assertEq(requests[0].requestID, 100, "Only valid request ID should be included");
+    }
+
+    function testGetLatestUnprocessedBatch() public {
+        // Create 3 batches
+        vm.startPrank(trustedAggregators[0]);
+
+        // First batch
+        aggregator.submitCommitment(10, bytes("payload 10"), bytes("auth 10"));
+        aggregator.createBatch();
+
+        // Second batch
+        aggregator.submitCommitment(20, bytes("payload 20"), bytes("auth 20"));
+        aggregator.createBatch();
+
+        // Third batch
+        aggregator.submitCommitment(30, bytes("payload 30"), bytes("auth 30"));
+        uint256 batch3 = aggregator.createBatch();
+        vm.stopPrank();
+
+        // Get latest unprocessed batch
+        (uint256 latestBatchNum, IAggregatorBatches.CommitmentRequest[] memory requests) =
+            aggregator.getLatestUnprocessedBatch();
+
+        // Should return the latest batch (batch3)
+        assertEq(latestBatchNum, batch3, "Should return the latest unprocessed batch");
+        assertEq(requests.length, 1, "Batch should contain 1 request");
+        assertEq(requests[0].requestID, 30, "Latest batch should contain request 30");
+
+        // Process batches 1 and 2
+        bytes memory hashroot = bytes("test hashroot");
+
+        // Process batch 1
+        vm.prank(trustedAggregators[0]);
+        aggregator.submitHashroot(1, hashroot);
+        vm.prank(trustedAggregators[1]);
+        aggregator.submitHashroot(1, hashroot);
+
+        // Process batch 2
+        vm.prank(trustedAggregators[0]);
+        aggregator.submitHashroot(2, hashroot);
+        vm.prank(trustedAggregators[1]);
+        aggregator.submitHashroot(2, hashroot);
+
+        // Check latest unprocessed batch again - should still be batch 3
+        (latestBatchNum, requests) = aggregator.getLatestUnprocessedBatch();
+        assertEq(latestBatchNum, batch3, "Should still return batch 3");
+
+        // Process batch 3
+        vm.prank(trustedAggregators[0]);
+        aggregator.submitHashroot(3, hashroot);
+        vm.prank(trustedAggregators[1]);
+        aggregator.submitHashroot(3, hashroot);
+
+        // Now all batches are processed, getLatestUnprocessedBatch should return 0
+        (latestBatchNum, requests) = aggregator.getLatestUnprocessedBatch();
+        assertEq(latestBatchNum, 0, "Should return 0 when no unprocessed batches exist");
+        assertEq(requests.length, 0, "Should return empty array when no unprocessed batches exist");
+    }
+
+    function testGetBatchInvalidBatchNumber() public {
+        // Try to get non-existent batch
+        vm.expectRevert("Invalid batch number");
+        aggregator.getBatch(999);
+
+        // Try to get batch 0
+        vm.expectRevert("Invalid batch number");
+        aggregator.getBatch(0);
+    }
+
+    function testGetBatchHashrootInvalidBatchNumber() public {
+        // Try to get hashroot for non-existent batch
+        vm.expectRevert("Invalid batch number");
+        aggregator.getBatchHashroot(999);
+
+        // Try to get hashroot for batch 0
+        vm.expectRevert("Invalid batch number");
+        aggregator.getBatchHashroot(0);
+    }
+
+    function testGetUnprocessedRequestAtIndexOutOfBounds() public {
+        // Try to access an out-of-bounds index
+        vm.expectRevert("Index out of bounds");
+        aggregator.getUnprocessedRequestAtIndex(999);
+    }
+
+    function testSubmitCommitmentAsNonAggregator() public {
+        // Try to submit commitment as non-aggregator
+        vm.prank(nonAggregator);
+        vm.expectRevert("Caller is not a trusted aggregator");
+        aggregator.submitCommitment(1, bytes("test"), bytes("test"));
+    }
+
+    function testCreateBatchAsNonAggregator() public {
+        // Try to create batch as non-aggregator
+        vm.prank(nonAggregator);
+        vm.expectRevert("Caller is not a trusted aggregator");
+        aggregator.createBatch();
+    }
+
+    function testCreateBatchForRequestsAsNonAggregator() public {
+        uint256[] memory requestIDs = new uint256[](1);
+        requestIDs[0] = 1;
+
+        // Try to create batch as non-aggregator
+        vm.prank(nonAggregator);
+        vm.expectRevert("Caller is not a trusted aggregator");
+        aggregator.createBatchForRequests(requestIDs);
+    }
+
+    function testSubmitHashrootAsNonAggregator() public {
+        // Setup a batch
+        vm.prank(trustedAggregators[0]);
+        aggregator.submitCommitment(1, bytes("test"), bytes("test"));
+
+        vm.prank(trustedAggregators[0]);
+        uint256 batchNumber = aggregator.createBatch();
+
+        // Try to submit hashroot as non-aggregator
+        vm.prank(nonAggregator);
+        vm.expectRevert("Caller is not a trusted aggregator");
+        aggregator.submitHashroot(batchNumber, bytes("test"));
+    }
+
+    function testSubmitHashrootForProcessedBatch() public {
+        // Setup and process a batch
+        vm.prank(trustedAggregators[0]);
+        aggregator.submitCommitment(1, bytes("test"), bytes("test"));
+
+        vm.prank(trustedAggregators[0]);
+        uint256 batchNumber = aggregator.createBatch();
+
+        bytes memory hashroot = bytes("test hashroot");
+
+        // Process the batch
+        vm.prank(trustedAggregators[0]);
+        aggregator.submitHashroot(batchNumber, hashroot);
+        vm.prank(trustedAggregators[1]);
+        aggregator.submitHashroot(batchNumber, hashroot);
+
+        // Try to submit hashroot for already processed batch
+        vm.prank(trustedAggregators[2]);
+        vm.expectRevert("Batch already processed");
+        aggregator.submitHashroot(batchNumber, hashroot);
+    }
+
+    function testVoteSameHashrootTwice() public {
+        // Setup a batch
+        vm.prank(trustedAggregators[0]);
+        aggregator.submitCommitment(1, bytes("test"), bytes("test"));
+
+        vm.prank(trustedAggregators[0]);
+        uint256 batchNumber = aggregator.createBatch();
+
+        bytes memory hashroot = bytes("test hashroot");
+
+        // Submit hashroot first time
+        vm.prank(trustedAggregators[0]);
+        bool result = aggregator.submitHashroot(batchNumber, hashroot);
+        assertTrue(result, "First submission should succeed");
+
+        // Submit same hashroot again - should return true but not increase vote count
+        vm.prank(trustedAggregators[0]);
+        result = aggregator.submitHashroot(batchNumber, hashroot);
+        assertTrue(result, "Second submission of same hashroot should succeed");
+
+        // Verify vote count is still 1
+        uint256 votes = aggregator.getHashrootVoteCount(batchNumber, hashroot);
+        assertEq(votes, 1, "Vote count should still be 1");
+    }
+
+    // Tests for administrative functions
+
+    function testAddAggregator() public {
+        address newAggregator = address(0x4);
+
+        // Add new aggregator
+        aggregator.addAggregator(newAggregator);
+
+        // Verify the new aggregator can perform trusted actions
+        vm.prank(newAggregator);
+        aggregator.submitCommitment(1, bytes("test"), bytes("test"));
+
+        // Try to add an existing aggregator - should revert
+        vm.expectRevert("Aggregator already exists");
+        aggregator.addAggregator(trustedAggregators[0]);
+    }
+
+    function testRemoveAggregator() public {
+        // Remove an existing aggregator
+        aggregator.removeAggregator(trustedAggregators[2]);
+
+        // Verify the removed aggregator can no longer perform trusted actions
+        vm.prank(trustedAggregators[2]);
+        vm.expectRevert("Caller is not a trusted aggregator");
+        aggregator.submitCommitment(1, bytes("test"), bytes("test"));
+
+        // Try to remove a non-existent aggregator - should revert
+        vm.expectRevert("Aggregator does not exist");
+        aggregator.removeAggregator(address(0x999));
+
+        // Try to remove when it would make required votes impossible
+        // Currently 2 aggregators with 2 required votes - removing one more would make it impossible
+        vm.expectRevert("Cannot remove aggregator: would make required votes impossible");
+        aggregator.removeAggregator(trustedAggregators[0]);
+    }
+
+    function testUpdateRequiredVotes() public {
+        // Update to require only 1 vote
+        aggregator.updateRequiredVotes(1);
+
+        // Verify a batch can be processed with just 1 vote now
+        vm.prank(trustedAggregators[0]);
+        aggregator.submitCommitment(1, bytes("test"), bytes("test"));
+
+        vm.prank(trustedAggregators[0]);
+        uint256 batchNumber = aggregator.createBatch();
+
+        // Submit just one vote
+        vm.prank(trustedAggregators[0]);
+        aggregator.submitHashroot(batchNumber, bytes("test"));
+
+        // Batch should be processed with just 1 vote now
+        (, bool processed,) = aggregator.getBatch(batchNumber);
+        assertTrue(processed, "Batch should be processed with just 1 vote after updating requirement");
+
+        // Try to set an invalid vote threshold (higher than total aggregators)
+        vm.expectRevert("Invalid votes threshold");
+        aggregator.updateRequiredVotes(4);
+
+        // Try to set votes to zero
+        vm.expectRevert("Invalid votes threshold");
+        aggregator.updateRequiredVotes(0);
+    }
+
+    function testTransferOwnership() public {
+        address newOwner = address(0x123);
+
+        // Transfer ownership
+        aggregator.transferOwnership(newOwner);
+
+        // Owner functions should now be restricted to the new owner
+        vm.prank(newOwner);
+        aggregator.addAggregator(address(0x456));
+
+        // Original owner should no longer have access
+        vm.expectRevert("Caller is not the owner");
+        aggregator.addAggregator(address(0x789));
+
+        // Try to transfer to zero address - should revert
+        vm.prank(newOwner);
+        vm.expectRevert("New owner cannot be zero address");
+        aggregator.transferOwnership(address(0));
+    }
+
+    function testNonOwnerAdminFunctions() public {
+        address nonOwner = address(0x999);
+
+        // Try admin functions as non-owner
+        vm.startPrank(nonOwner);
+
+        vm.expectRevert("Caller is not the owner");
+        aggregator.addAggregator(address(0x123));
+
+        vm.expectRevert("Caller is not the owner");
+        aggregator.removeAggregator(trustedAggregators[0]);
+
+        vm.expectRevert("Caller is not the owner");
+        aggregator.updateRequiredVotes(1);
+
+        vm.expectRevert("Caller is not the owner");
+        aggregator.transferOwnership(address(0x123));
+
+        vm.stopPrank();
+    }
+
+    function testCreateBatchForRequestsWithNoValidRequests() public {
+        // Try to create batch with only invalid request IDs
+        uint256[] memory invalidRequests = new uint256[](2);
+        invalidRequests[0] = 999;
+        invalidRequests[1] = 888;
+
+        // Should revert because there are no valid unprocessed request IDs
+        vm.prank(trustedAggregators[0]);
+        vm.expectRevert("No valid unprocessed request IDs provided");
+        aggregator.createBatchForRequests(invalidRequests);
+    }
+
+    // Tests for remaining untested functions and branches
+
+    function testGetCommitment() public {
+        // Submit a commitment
+        uint256 requestID = 123;
+        bytes memory payload = bytes("test payload");
+        bytes memory authenticator = bytes("test authenticator");
+
+        vm.prank(trustedAggregators[0]);
+        aggregator.submitCommitment(requestID, payload, authenticator);
+
+        // Get the commitment and verify its data
+        IAggregatorBatches.CommitmentRequest memory request = aggregator.getCommitment(requestID);
+
+        assertEq(request.requestID, requestID, "Request ID should match");
+        assertEq(string(request.payload), string(payload), "Payload should match");
+        assertEq(string(request.authenticator), string(authenticator), "Authenticator should match");
+
+        // Check non-existent commitment
+        IAggregatorBatches.CommitmentRequest memory emptyRequest = aggregator.getCommitment(999);
+        assertEq(emptyRequest.requestID, 0, "Non-existent request should have ID 0");
+        assertEq(emptyRequest.payload.length, 0, "Non-existent request should have empty payload");
+        assertEq(emptyRequest.authenticator.length, 0, "Non-existent request should have empty authenticator");
+    }
+
+    function testGetLatestBatchNumber() public {
+        // Initially should be 0
+        uint256 latestBatch = aggregator.getLatestBatchNumber();
+        assertEq(latestBatch, 0, "Initial latest batch should be 0");
+
+        // Create some batches
+        vm.startPrank(trustedAggregators[0]);
+
+        // First batch
+        aggregator.submitCommitment(10, bytes("payload 10"), bytes("auth 10"));
+        aggregator.createBatch();
+
+        // Check latest batch number updated
+        latestBatch = aggregator.getLatestBatchNumber();
+        assertEq(latestBatch, 1, "Latest batch should be 1");
+
+        // Create more batches
+        aggregator.submitCommitment(20, bytes("payload 20"), bytes("auth 20"));
+        aggregator.createBatch();
+
+        aggregator.submitCommitment(30, bytes("payload 30"), bytes("auth 30"));
+        aggregator.createBatch();
+
+        vm.stopPrank();
+
+        // Check latest batch number updated
+        latestBatch = aggregator.getLatestBatchNumber();
+        assertEq(latestBatch, 3, "Latest batch should be 3");
+    }
+
+    function testConstructorValidation() public {
+        // Test with empty aggregator list
+        address[] memory noAggregators = new address[](0);
+        vm.expectRevert("At least one aggregator required");
+        new AggregatorBatches(noAggregators, 1);
+
+        // Test with invalid vote threshold (greater than total aggregators)
+        address[] memory singleAggregator = new address[](1);
+        singleAggregator[0] = address(0x1);
+        vm.expectRevert("Invalid votes threshold");
+        new AggregatorBatches(singleAggregator, 2);
+
+        // Test with zero vote threshold
+        vm.expectRevert("Invalid votes threshold");
+        new AggregatorBatches(singleAggregator, 0);
+    }
+
+    function testGetBatchHashrootValidation() public {
+        // Test with valid batch that has no hashroot
+        vm.prank(trustedAggregators[0]);
+        aggregator.submitCommitment(1, bytes("test payload"), bytes("test authenticator"));
+
+        vm.prank(trustedAggregators[0]);
+        uint256 batchNumber = aggregator.createBatch();
+
+        bytes memory emptyHashroot = aggregator.getBatchHashroot(batchNumber);
+        assertEq(emptyHashroot.length, 0, "Hashroot should be empty for unprocessed batch");
+
+        // Test with batch number 0
+        vm.expectRevert("Invalid batch number");
+        aggregator.getBatchHashroot(0);
+
+        // Test with non-existent batch
+        uint256 nonExistentBatch = 999;
+        vm.expectRevert("Invalid batch number");
+        aggregator.getBatchHashroot(nonExistentBatch);
+    }
+
+    function testGetLatestUnprocessedBatchWithSkippedBatches() public {
+        // Create 3 batches with different processing states
+        vm.startPrank(trustedAggregators[0]);
+
+        // First batch
+        aggregator.submitCommitment(10, bytes("payload 10"), bytes("auth 10"));
+        aggregator.createBatch();
+
+        // Process first batch to make latestProcessedBatchNumber > 0
+        bytes memory hashroot = bytes("test hashroot");
+        aggregator.submitHashroot(1, hashroot);
+        vm.stopPrank();
+
+        vm.prank(trustedAggregators[1]);
+        aggregator.submitHashroot(1, hashroot);
+
+        // Continue creating more batches
+        vm.startPrank(trustedAggregators[0]);
+
+        // Second batch
+        aggregator.submitCommitment(20, bytes("payload 20"), bytes("auth 20"));
+        aggregator.createBatch();
+
+        // Third batch
+        aggregator.submitCommitment(30, bytes("payload 30"), bytes("auth 30"));
+        uint256 batch3 = aggregator.createBatch();
+        vm.stopPrank();
+
+        // Process batch 2
+        vm.prank(trustedAggregators[0]);
+        aggregator.submitHashroot(2, hashroot);
+        vm.prank(trustedAggregators[1]);
+        aggregator.submitHashroot(2, hashroot);
+
+        // Create batch 4
+        vm.prank(trustedAggregators[0]);
+        aggregator.submitCommitment(40, bytes("payload 40"), bytes("auth 40"));
+        vm.prank(trustedAggregators[0]);
+        uint256 batch4 = aggregator.createBatch();
+
+        // Now batch 3 and 4 are unprocessed
+        // The latest unprocessed batch should be batch 4
+        (uint256 latestBatchNum, IAggregatorBatches.CommitmentRequest[] memory requests) =
+            aggregator.getLatestUnprocessedBatch();
+
+        assertEq(latestBatchNum, batch4, "Latest unprocessed batch should be batch 4");
+        assertEq(requests.length, 1, "Batch should contain 1 request");
+        assertEq(requests[0].requestID, 40, "Request should be ID 40");
+
+        // If we try to process batch 4 before batch 3, it should revert
+        vm.prank(trustedAggregators[0]);
+        vm.expectRevert("Batches must be processed in sequence; can't skip batches");
+        aggregator.submitHashroot(batch4, hashroot);
+
+        // Process batch 3
+        vm.prank(trustedAggregators[0]);
+        aggregator.submitHashroot(batch3, hashroot);
+        vm.prank(trustedAggregators[1]);
+        aggregator.submitHashroot(batch3, hashroot);
+
+        // Now try to process batch 3 again - should revert with "already processed"
+        vm.prank(trustedAggregators[0]);
+        vm.expectRevert("Batch already processed");
+        aggregator.submitHashroot(batch3, hashroot);
     }
 }

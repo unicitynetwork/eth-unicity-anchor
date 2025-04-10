@@ -31,6 +31,9 @@ COPY . /workspace/
 RUN chmod +x /workspace/scripts/run-ci-locally.sh
 RUN chmod +x /workspace/scripts/manual-e2e-test.sh
 
+# Create symbolic links to ensure scripts are accessible
+RUN ln -sf /workspace/scripts/manual-e2e-test.sh /usr/local/bin/manual-e2e-test.sh
+
 # Set entrypoint
 ENTRYPOINT ["/workspace/scripts/run-ci-locally.sh"]
 CMD ["--workflow=test"]

@@ -1,35 +1,33 @@
-# Foundry Smart Contract Project Guidelines
+# Ethereum Unicity Anchor Project Guidelines
 
-## Build & Test Commands
-- Build all contracts: `forge build`
+## Solidity Commands
+- Build: `forge build`
 - Run all tests: `forge test`
-- Run a single test: `forge test --match-test testFunctionName`
-- Run tests with verbosity: `forge test -vvv`
+- Run single test: `forge test --match-test testFunctionName`
+- Debug tests: `forge test -vvv --match-test testFunctionName`
 - Gas report: `forge test --gas-report`
-- Coverage report: `forge coverage`
-- Deploy script: `forge script script/ScriptName.s.sol --rpc-url <RPC_URL> --broadcast`
+- Coverage: `forge coverage`
+- Deploy: `forge script script/AggregatorBatches.s.sol --rpc-url <RPC_URL> --broadcast`
 
 ## TypeScript Client Commands
-- Build client: `cd ts-client && npm run build`
-- All unit tests: `cd ts-client && npm run test:unit`
+- Build: `cd ts-client && npm run build`
+- Unit tests: `cd ts-client && npm run test:unit`
+- Single test: `cd ts-client && npm test -- -t "test name pattern"`
 - Integration tests: `npm run test:integration`
-- TypeScript lint: `cd ts-client && npm run lint`
+- Lint: `cd ts-client && npm run lint`
 
 ## CI/CD Commands
-- Run test workflow locally: `./scripts/run-ci-locally.sh --workflow=test`
-- Run nightly workflow locally: `./scripts/run-ci-locally.sh --workflow=nightly`
-- Run tests in Docker (isolated): `./scripts/run-ci-in-docker.sh --workflow=test`
-- Show script usage: `./scripts/run-ci-locally.sh --help`
+- Local test workflow: `./scripts/run-ci-locally.sh --workflow=test`
+- Docker isolated tests: `./scripts/run-ci-in-docker.sh --workflow=test`
+- E2E testing: `./scripts/manual-e2e-test.sh`
 
 ## Code Style Guidelines
-- **Solidity Version**: Use pragma ^0.8.13 or higher
-- **Imports**: Group external imports first, then internal imports
-- **Contract Structure**: License -> Pragma -> Imports -> Interfaces -> Libraries -> Contracts
+- **Solidity**: Use pragma ^0.8.13+, custom errors, NatSpec comments
+- **Structure**: License → Pragma → Imports (external first) → Interfaces → Libraries → Contracts
+- **Functions**: Order by visibility (external → public → internal → private)
 - **Naming**: 
-  - Contracts/Libraries: PascalCase
-  - Functions/Variables: camelCase
-  - Constants: UPPER_CASE
-- **Function Order**: External -> Public -> Internal -> Private
-- **Error Handling**: Use custom errors instead of require statements with strings
-- **Documentation**: NatSpec format for all public functions
-- **Security**: Follow best practices from OpenZeppelin and Trail of Bits
+  - PascalCase: Contracts, interfaces, libraries, events
+  - camelCase: Functions, arguments, local variables
+  - UPPER_CASE: Constants, immutables
+- **TypeScript**: Strong typing (no any), async/await (not promises), comprehensive test coverage
+- **Security**: Follow OpenZeppelin patterns, minimal use of unsafe operations, validate all inputs

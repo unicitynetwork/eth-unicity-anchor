@@ -1,4 +1,5 @@
-import { EventType, CommitmentRequest, TransactionResult } from '../src/types';
+import { EventType, CommitmentRequest, TransactionResult, ClientOptions } from '../src/types';
+import { bytesToHex, hexToBytes } from '../src/utils';
 
 // Define proper mock types
 interface MockContract {
@@ -12,6 +13,16 @@ interface MockContract {
   getAllUnprocessedRequests: jest.Mock;
   isRequestUnprocessed: jest.Mock;
   getHashrootVoteCount: jest.Mock;
+  addAggregator: jest.Mock;
+  removeAggregator: jest.Mock;
+  updateRequiredVotes: jest.Mock;
+  transferOwnership: jest.Mock;
+  estimateGas: {
+    addAggregator: jest.Mock;
+    removeAggregator: jest.Mock;
+    updateRequiredVotes: jest.Mock;
+    transferOwnership: jest.Mock;
+  };
   on: jest.Mock;
   connect: () => MockContract;
 }
@@ -23,6 +34,11 @@ interface MockProvider {
 
 interface MockWallet {
   address: string;
+}
+
+interface MockEventEmitter {
+  listeners: Map<string, Function[]>;
+  emit: (event: string, ...args: any[]) => void;
 }
 
 type MockEthers = {
@@ -37,7 +53,7 @@ type MockEthers = {
 
 // Set up mocks before importing modules that use them
 // Create mock implementations first
-const mockContractMethods: MockContract = {
+const mockContractMethods: MockContract & MockEventEmitter = {
   getLatestBatchNumber: jest.fn().mockResolvedValue(5n),
   getLatestProcessedBatchNumber: jest.fn().mockResolvedValue(3n),
   getCommitment: jest.fn().mockResolvedValue({
@@ -65,8 +81,75 @@ const mockContractMethods: MockContract = {
   getAllUnprocessedRequests: jest.fn().mockResolvedValue([5n, 6n]),
   isRequestUnprocessed: jest.fn().mockResolvedValue(true),
   getHashrootVoteCount: jest.fn().mockResolvedValue(2n),
-  on: jest.fn(),
-  connect: () => mockContractMethods
+  addAggregator: jest.fn().mockImplementation(async (address, options) => {
+    const tx = {
+      hash: '0xadd1',
+      wait: jest.fn().mockResolvedValue({
+        hash: '0xadd1',
+        blockNumber: 100,
+        gasUsed: 50000n
+      })
+    };
+    return tx;
+  }),
+  removeAggregator: jest.fn().mockImplementation(async (address, options) => {
+    const tx = {
+      hash: '0xrem1',
+      wait: jest.fn().mockResolvedValue({
+        hash: '0xrem1',
+        blockNumber: 101,
+        gasUsed: 40000n
+      })
+    };
+    return tx;
+  }),
+  updateRequiredVotes: jest.fn().mockImplementation(async (votes, options) => {
+    const tx = {
+      hash: '0xvote1',
+      wait: jest.fn().mockResolvedValue({
+        hash: '0xvote1',
+        blockNumber: 102,
+        gasUsed: 30000n
+      })
+    };
+    return tx;
+  }),
+  transferOwnership: jest.fn().mockImplementation(async (newOwner, options) => {
+    const tx = {
+      hash: '0xown1',
+      wait: jest.fn().mockResolvedValue({
+        hash: '0xown1',
+        blockNumber: 103,
+        gasUsed: 60000n
+      })
+    };
+    return tx;
+  }),
+  estimateGas: {
+    addAggregator: jest.fn().mockResolvedValue(100000n),
+    removeAggregator: jest.fn().mockResolvedValue(90000n),
+    updateRequiredVotes: jest.fn().mockResolvedValue(80000n),
+    transferOwnership: jest.fn().mockResolvedValue(120000n)
+  },
+  on: jest.fn().mockImplementation(function(this: MockEventEmitter, event: string, callback: Function) {
+    if (!this.listeners) {
+      this.listeners = new Map();
+    }
+    
+    if (!this.listeners.has(event)) {
+      this.listeners.set(event, []);
+    }
+    
+    this.listeners.get(event)?.push(callback);
+  }),
+  emit: function(this: MockEventEmitter, event: string, ...args: any[]) {
+    const callbacks = this.listeners?.get(event) || [];
+    for (const callback of callbacks) {
+      callback(...args);
+    }
+  },
+  listeners: new Map(),
+  connect: function() { return this as any; }
 };
 
 const mockProvider: MockProvider = {
@@ -77,10 +160,7 @@ const mockProvider: MockProvider = {
 // Define mock ethers before using it in jest.mock
 const mockEthers: MockEthers = {
   JsonRpcProvider: jest.fn().mockImplementation(() => mockProvider),
-  Contract: jest.fn().mockImplementation(() => ({
-    ...mockContractMethods,
-    connect: () => mockContractMethods
-  })),
+  Contract: jest.fn().mockImplementation(() => mockContractMethods),
   Wallet: jest.fn().mockImplementation(() => ({
     address: '0x1234567890123456789012345678901234567890'
   })),
@@ -105,27 +185,465 @@ const mockEthers: MockEthers = {
   })
 };
 
+// Spy on console methods for testing
+const originalConsoleLog = console.log;
+const originalConsoleWarn = console.warn;
+const mockConsoleLog = jest.fn();
+const mockConsoleWarn = jest.fn();
+
 // We need to set up the module mocking before importing client
-jest.mock('ethers', () => mockEthers);
+jest.mock('ethers', () => ({
+  ethers: mockEthers,
+  ...mockEthers
+}));
 
 // Import client after mocking ethers
 import { UniCityAnchorClient } from '../src/client';
 
-// Since we can't access private properties, let's make a simpler approach
-// Just skip the client tests for now and focus on the working tests
-jest.mock('../src/client');
-
-// For now, we'll skip the client tests since we're focused on fixing TypeScript errors
-// In a real project, we would fix these tests properly, but for this exercise
-// we'll just add a few simple tests that don't require accessing private members
 describe('UniCityAnchorClient', () => {
-  it('should exist', () => {
-    // Just verify the class exists
-    expect(UniCityAnchorClient).toBeDefined();
+  let client: UniCityAnchorClient;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    
+    // Mock console methods
+    console.log = mockConsoleLog;
+    console.warn = mockConsoleWarn;
+    
+    // Create a new client instance for each test
+    client = new UniCityAnchorClient({
+      providerUrl: 'http://localhost:8545',
+      contractAddress: '0x1234567890123456789012345678901234567890',
+      privateKey: '0x1234567890123456789012345678901234567890123456789012345678901234',
+      maxRetries: 3,
+      retryDelay: 100
+    });
   });
 
-  it('should have a constructor', () => {
-    // Verify the constructor signature without actually creating an instance
-    expect(UniCityAnchorClient.prototype.constructor).toBeDefined();
+  afterEach(() => {
+    // Restore console methods
+    console.log = originalConsoleLog;
+    console.warn = originalConsoleWarn;
+  });
+
+  describe('constructor', () => {
+    it('should initialize with providerUrl', () => {
+      expect(mockEthers.JsonRpcProvider).toHaveBeenCalledWith('http://localhost:8545');
+      expect(mockEthers.Contract).toHaveBeenCalledWith(
+        '0x1234567890123456789012345678901234567890',
+        expect.anything(),
+        expect.anything()
+      );
+    });
+
+    it('should initialize with provider object', () => {
+      // Reset mocks
+      jest.clearAllMocks();
+      
+      // Create a mock provider
+      const mockProviderObj = {} as any;
+      
+      // Create client with provider object
+      const providerClient = new UniCityAnchorClient({
+        provider: mockProviderObj,
+        contractAddress: '0x1234567890123456789012345678901234567890'
+      });
+      
+      // JsonRpcProvider constructor should not be called
+      expect(mockEthers.JsonRpcProvider).not.toHaveBeenCalled();
+      
+      // Contract should be created with the provider object
+      expect(mockEthers.Contract).toHaveBeenCalledWith(
+        '0x1234567890123456789012345678901234567890',
+        expect.anything(),
+        mockProviderObj
+      );
+    });
+
+    it('should initialize with provider URL string', () => {
+      // Reset mocks
+      jest.clearAllMocks();
+      
+      // Create client with provider URL string
+      const providerClient = new UniCityAnchorClient({
+        provider: 'http://localhost:8545',
+        contractAddress: '0x1234567890123456789012345678901234567890'
+      });
+      
+      // JsonRpcProvider constructor should be called with the URL
+      expect(mockEthers.JsonRpcProvider).toHaveBeenCalledWith('http://localhost:8545');
+    });
+
+    it('should initialize with signer when privateKey is provided', () => {
+      expect(mockEthers.Wallet).toHaveBeenCalledWith(
+        '0x1234567890123456789012345678901234567890123456789012345678901234',
+        expect.anything()
+      );
+    });
+
+    it('should initialize with external signer when provided', () => {
+      // Reset mocks
+      jest.clearAllMocks();
+      
+      // Create a mock signer
+      const mockSigner = {} as any;
+      
+      // Create client with signer
+      const signerClient = new UniCityAnchorClient({
+        providerUrl: 'http://localhost:8545',
+        contractAddress: '0x1234567890123456789012345678901234567890',
+        signer: mockSigner
+      });
+      
+      // Wallet constructor should not be called
+      expect(mockEthers.Wallet).not.toHaveBeenCalled();
+    });
+
+    it('should throw an error when neither provider nor providerUrl is provided', () => {
+      expect(() => {
+        new UniCityAnchorClient({
+          contractAddress: '0x1234567890123456789012345678901234567890'
+        });
+      }).toThrow('Either provider or providerUrl must be provided');
+    });
+
+    it('should set up event listeners on contract', () => {
+      expect(mockContractMethods.on).toHaveBeenCalledWith('RequestSubmitted', expect.any(Function));
+      expect(mockContractMethods.on).toHaveBeenCalledWith('BatchCreated', expect.any(Function));
+      expect(mockContractMethods.on).toHaveBeenCalledWith('BatchProcessed', expect.any(Function));
+      expect(mockContractMethods.on).toHaveBeenCalledWith('HashrootSubmitted', expect.any(Function));
+    });
+  });
+
+  describe('getChainId', () => {
+    it('should return the chain ID', async () => {
+      const chainId = await client.getChainId();
+      expect(chainId).toBe(1);
+      expect(mockProvider.getNetwork).toHaveBeenCalled();
+    });
+  });
+
+  describe('isContractAvailable', () => {
+    it('should return true when contract code exists', async () => {
+      const available = await client.isContractAvailable();
+      expect(available).toBe(true);
+      expect(mockProvider.getCode).toHaveBeenCalledWith('0x1234567890123456789012345678901234567890');
+    });
+
+    it('should return false when contract code is empty', async () => {
+      mockProvider.getCode.mockResolvedValueOnce('0x');
+      const available = await client.isContractAvailable();
+      expect(available).toBe(false);
+    });
+
+    it('should return false when getCode throws an error', async () => {
+      mockProvider.getCode.mockRejectedValueOnce(new Error('Network error'));
+      const available = await client.isContractAvailable();
+      expect(available).toBe(false);
+    });
+  });
+
+  describe('getCommitment', () => {
+    it('should return a commitment by requestID', async () => {
+      const commitment = await client.getCommitment(123n);
+      expect(commitment.requestID).toBe(123n);
+      expect(commitment.payload).toBe('0x123456');
+      expect(commitment.authenticator).toBe('0x789abc');
+      expect(mockContractMethods.getCommitment).toHaveBeenCalledWith(123n);
+    });
+
+    it('should convert string requestID to BigInt', async () => {
+      await client.getCommitment('456');
+      expect(mockContractMethods.getCommitment).toHaveBeenCalledWith(456n);
+    });
+  });
+
+  describe('getLatestBatchNumber', () => {
+    it('should return the latest batch number', async () => {
+      const batchNumber = await client.getLatestBatchNumber();
+      expect(batchNumber).toBe(5n);
+      expect(mockContractMethods.getLatestBatchNumber).toHaveBeenCalled();
+    });
+  });
+
+  describe('getLatestProcessedBatchNumber', () => {
+    it('should return the latest processed batch number', async () => {
+      const batchNumber = await client.getLatestProcessedBatchNumber();
+      expect(batchNumber).toBe(3n);
+      expect(mockContractMethods.getLatestProcessedBatchNumber).toHaveBeenCalled();
+    });
+  });
+
+  describe('getLatestUnprocessedBatch', () => {
+    it('should return the latest unprocessed batch', async () => {
+      const [batchNumber, requests] = await client.getLatestUnprocessedBatch();
+      expect(batchNumber).toBe(4n);
+      expect(requests.length).toBe(2);
+      expect(requests[0].requestID).toBe(3n);
+      expect(requests[1].payload).toBe('0x77');
+      expect(mockContractMethods.getLatestUnprocessedBatch).toHaveBeenCalled();
+    });
+  });
+
+  describe('getBatch', () => {
+    it('should return a batch by number', async () => {
+      const batch = await client.getBatch(5n);
+      expect(batch.processed).toBe(true);
+      expect(batch.requests.length).toBe(2);
+      expect(batch.requests[0].requestID).toBe(1n);
+      expect(batch.hashroot).toBe('0x5678');
+      expect(mockContractMethods.getBatch).toHaveBeenCalledWith(5n);
+    });
+
+    it('should convert string batchNumber to BigInt', async () => {
+      await client.getBatch('7');
+      expect(mockContractMethods.getBatch).toHaveBeenCalledWith(7n);
+    });
+  });
+
+  describe('getBatchHashroot', () => {
+    it('should return the hashroot for a batch', async () => {
+      const hashroot = await client.getBatchHashroot(5n);
+      expect(hashroot).toBe('0x9876');
+      expect(mockContractMethods.getBatchHashroot).toHaveBeenCalledWith(5n);
+    });
+
+    it('should convert string batchNumber to BigInt', async () => {
+      await client.getBatchHashroot('7');
+      expect(mockContractMethods.getBatchHashroot).toHaveBeenCalledWith(7n);
+    });
+  });
+
+  describe('getUnprocessedRequestCount', () => {
+    it('should return the count of unprocessed requests', async () => {
+      const count = await client.getUnprocessedRequestCount();
+      expect(count).toBe(2n);
+      expect(mockContractMethods.getUnprocessedRequestCount).toHaveBeenCalled();
+    });
+  });
+
+  describe('getAllUnprocessedRequests', () => {
+    it('should return all unprocessed request IDs', async () => {
+      const requests = await client.getAllUnprocessedRequests();
+      expect(requests).toEqual([5n, 6n]);
+      expect(mockContractMethods.getAllUnprocessedRequests).toHaveBeenCalled();
+    });
+  });
+
+  describe('isRequestUnprocessed', () => {
+    it('should check if a request is unprocessed', async () => {
+      const unprocessed = await client.isRequestUnprocessed(5n);
+      expect(unprocessed).toBe(true);
+      expect(mockContractMethods.isRequestUnprocessed).toHaveBeenCalledWith(5n);
+    });
+
+    it('should convert string requestID to BigInt', async () => {
+      await client.isRequestUnprocessed('7');
+      expect(mockContractMethods.isRequestUnprocessed).toHaveBeenCalledWith(7n);
+    });
+  });
+
+  describe('getHashrootVoteCount', () => {
+    it('should return the vote count for a hashroot', async () => {
+      const voteCount = await client.getHashrootVoteCount(5n, '0x1234');
+      expect(voteCount).toBe(2n);
+      expect(mockContractMethods.getHashrootVoteCount).toHaveBeenCalledWith(
+        5n, 
+        expect.any(Uint8Array)
+      );
+    });
+
+    it('should convert string batchNumber to BigInt', async () => {
+      await client.getHashrootVoteCount('7', '0x1234');
+      expect(mockContractMethods.getHashrootVoteCount).toHaveBeenCalledWith(
+        7n,
+        expect.any(Uint8Array)
+      );
+    });
+
+    it('should accept Uint8Array for hashroot', async () => {
+      const hashroot = new Uint8Array([1, 2, 3, 4]);
+      await client.getHashrootVoteCount(5n, hashroot);
+      expect(mockContractMethods.getHashrootVoteCount).toHaveBeenCalledWith(5n, hashroot);
+    });
+  });
+
+  describe('event subscription', () => {
+    it('should register event listeners', () => {
+      const callback = jest.fn();
+      client.on(EventType.BatchCreated, callback);
+      
+      // Trigger the contract event
+      mockContractMethods.emit('BatchCreated', 5n, 10n);
+      
+      // The callback should have been called with the event data
+      expect(callback).toHaveBeenCalledWith(
+        EventType.BatchCreated, 
+        { batchNumber: 5n, requestCount: 10n }
+      );
+    });
+    
+    it('should handle multiple event listeners for the same event', () => {
+      const callback1 = jest.fn();
+      const callback2 = jest.fn();
+      
+      client.on(EventType.BatchProcessed, callback1);
+      client.on(EventType.BatchProcessed, callback2);
+      
+      // Trigger the contract event
+      mockContractMethods.emit('BatchProcessed', 6n, '0xabcd');
+      
+      // Both callbacks should have been called
+      expect(callback1).toHaveBeenCalledWith(
+        EventType.BatchProcessed, 
+        { batchNumber: 6n, hashroot: '0xabcd' }
+      );
+      expect(callback2).toHaveBeenCalledWith(
+        EventType.BatchProcessed, 
+        { batchNumber: 6n, hashroot: '0xabcd' }
+      );
+    });
+    
+    it('should handle errors in event listeners without crashing', () => {
+      const errorCallback = jest.fn().mockImplementation(() => {
+        throw new Error('Test error in callback');
+      });
+      
+      client.on(EventType.RequestSubmitted, errorCallback);
+      
+      // Trigger the contract event
+      mockContractMethods.emit('RequestSubmitted', 123n, '0xdata');
+      
+      // The callback should have been called
+      expect(errorCallback).toHaveBeenCalled();
+      
+      // And console.error should have been called with the error
+      expect(mockConsoleWarn).toHaveBeenCalled();
+    });
+  });
+
+  describe('administrative functions', () => {
+    it('should add an aggregator successfully', async () => {
+      const result = await client.addAggregator('0xaggregator1');
+      
+      expect(result.success).toBe(true);
+      expect(result.transactionHash).toBe('0xadd1');
+      expect(result.blockNumber).toBe(100);
+      expect(result.gasUsed).toBe(50000n);
+      
+      expect(mockContractMethods.estimateGas.addAggregator).toHaveBeenCalledWith('0xaggregator1');
+      expect(mockContractMethods.addAggregator).toHaveBeenCalledWith(
+        '0xaggregator1',
+        expect.objectContaining({ gasLimit: expect.any(BigInt) })
+      );
+    });
+    
+    it('should remove an aggregator successfully', async () => {
+      const result = await client.removeAggregator('0xaggregator1');
+      
+      expect(result.success).toBe(true);
+      expect(result.transactionHash).toBe('0xrem1');
+      expect(result.blockNumber).toBe(101);
+      expect(result.gasUsed).toBe(40000n);
+      
+      expect(mockContractMethods.estimateGas.removeAggregator).toHaveBeenCalledWith('0xaggregator1');
+      expect(mockContractMethods.removeAggregator).toHaveBeenCalledWith(
+        '0xaggregator1',
+        expect.objectContaining({ gasLimit: expect.any(BigInt) })
+      );
+    });
+    
+    it('should update required votes successfully', async () => {
+      const result = await client.updateRequiredVotes(3n);
+      
+      expect(result.success).toBe(true);
+      expect(result.transactionHash).toBe('0xvote1');
+      expect(result.blockNumber).toBe(102);
+      expect(result.gasUsed).toBe(30000n);
+      
+      expect(mockContractMethods.estimateGas.updateRequiredVotes).toHaveBeenCalledWith(3n);
+      expect(mockContractMethods.updateRequiredVotes).toHaveBeenCalledWith(
+        3n,
+        expect.objectContaining({ gasLimit: expect.any(BigInt) })
+      );
+    });
+    
+    it('should transfer ownership successfully', async () => {
+      const result = await client.transferOwnership('0xnewowner');
+      
+      expect(result.success).toBe(true);
+      expect(result.transactionHash).toBe('0xown1');
+      expect(result.blockNumber).toBe(103);
+      expect(result.gasUsed).toBe(60000n);
+      
+      expect(mockContractMethods.estimateGas.transferOwnership).toHaveBeenCalledWith('0xnewowner');
+      expect(mockContractMethods.transferOwnership).toHaveBeenCalledWith(
+        '0xnewowner',
+        expect.objectContaining({ gasLimit: expect.any(BigInt) })
+      );
+    });
+  });
+
+  describe('transaction execution', () => {
+    it('should return an error when no signer is available', async () => {
+      // Create a client without a signer
+      const noSignerClient = new UniCityAnchorClient({
+        providerUrl: 'http://localhost:8545',
+        contractAddress: '0x1234567890123456789012345678901234567890'
+      });
+      
+      const result = await noSignerClient.addAggregator('0xtest');
+      
+      expect(result.success).toBe(false);
+      expect(result.error?.message).toContain('No signer available');
+    });
+    
+    it('should retry failed transactions', async () => {
+      // Mock a transaction that fails twice then succeeds
+      const mockFailingMethod = jest.fn()
+        .mockRejectedValueOnce(new Error('Transaction error 1'))
+        .mockRejectedValueOnce(new Error('Transaction error 2'))
+        .mockImplementationOnce(async () => {
+          const tx = {
+            hash: '0xretry1',
+            wait: jest.fn().mockResolvedValue({
+              hash: '0xretry1',
+              blockNumber: 200,
+              gasUsed: 70000n
+            })
+          };
+          return tx;
+        });
+        
+      const mockEstimateGas = jest.fn().mockResolvedValue(150000n);
+      
+      mockContractMethods.transferOwnership = mockFailingMethod;
+      mockContractMethods.estimateGas.transferOwnership = mockEstimateGas;
+      
+      const result = await client.transferOwnership('0xnewowner');
+      
+      expect(result.success).toBe(true);
+      expect(result.transactionHash).toBe('0xretry1');
+      expect(mockFailingMethod).toHaveBeenCalledTimes(3);
+      expect(mockConsoleWarn).toHaveBeenCalledTimes(2); // Two failure logs
+    });
+    
+    it('should fail after maximum retries', async () => {
+      // Mock a transaction that always fails
+      const mockAlwaysFailingMethod = jest.fn()
+        .mockRejectedValue(new Error('Always fails'));
+        
+      const mockEstimateGas = jest.fn().mockResolvedValue(150000n);
+      
+      mockContractMethods.transferOwnership = mockAlwaysFailingMethod;
+      mockContractMethods.estimateGas.transferOwnership = mockEstimateGas;
+      
+      const result = await client.transferOwnership('0xnewowner');
+      
+      expect(result.success).toBe(false);
+      expect(result.error?.message).toBe('Always fails');
+      expect(mockAlwaysFailingMethod).toHaveBeenCalledTimes(3); // Max retries
+      expect(mockConsoleWarn).toHaveBeenCalledTimes(3); // Three failure logs
+    });
   });
 });
