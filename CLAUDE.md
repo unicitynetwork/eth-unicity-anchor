@@ -19,6 +19,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Single test: `cd ts-client && npm test -- -t "test name pattern"`
 - Integration tests: `cd ts-client && npm run test:integration`
 - All tests: `cd ts-client && npm run test:all`
+- Test utils only: `cd ts-client && npm run test:utils`
 - Lint: `cd ts-client && npm run lint`
 - Format code: `cd ts-client && npm run format`
 
@@ -49,6 +50,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - Use TypeScript's type system fully, including interfaces and type aliases
   - Node engine requirement: >= 20.0.0
   - Keep utility functions pure and well-tested
+  - Use ethers v6 for blockchain interactions
   
 - **Security**: 
   - Follow OpenZeppelin patterns and use their libraries

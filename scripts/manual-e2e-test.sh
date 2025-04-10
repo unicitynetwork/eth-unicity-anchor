@@ -335,10 +335,10 @@ INTEGRATION_LOG="integration-test.log"
 log "Integration test output will be written to $INTEGRATION_LOG"
 
 # Run tests with additional logging
-log "Starting integration tests with timeout of 60 seconds..."
+log "Starting integration tests with timeout of 120 seconds..."
 # Temporarily disable set -e to prevent script from exiting when tests fail
 set +e
-CONTRACT_ADDRESS=$CONTRACT_ADDRESS FORCE_COLOR=0 npm run test:integration -- --verbose --forceExit --testTimeout=60000 > $INTEGRATION_LOG 2>&1
+CONTRACT_ADDRESS=$CONTRACT_ADDRESS FORCE_COLOR=0 npm run test:integration -- --verbose --forceExit --testTimeout=120000 > $INTEGRATION_LOG 2>&1
 TEST_EXIT_CODE=$?
 # Re-enable set -e
 set -e

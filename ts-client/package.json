@@ -32,7 +32,8 @@
   "dependencies": {
     "ethers": "^6.8.1",
     "@openzeppelin/merkle-tree": "^1.0.5",
-    "typechain": "^8.3.2"
+    "typechain": "^8.3.2",
+    "@unicitylabs/commons": "github:unicitynetwork/shared#typescript"
   },
   "devDependencies": {
     "@types/jest": "^29.5.6",

@@ -3,6 +3,7 @@ export * from './types';
 export * from './client';
 export * from './aggregator-gateway';
 export * from './aggregator-node';
+export * from './aggregator-node-smt';
 export * from './utils';
 export { ABI } from './abi';
 
@@ -11,6 +12,7 @@ export { ABI } from './abi';
 import { 
   AggregatorGatewayClient, 
   AggregatorNodeClient,
+  SMTAggregatorNodeClient,
   generateRandomRequestId
 } from 'eth-unicity-anchor-client';
 
@@ -34,7 +36,7 @@ const result = await gateway.submitCommitment(
 // Create a batch
 const { batchNumber } = await gateway.createBatch();
 
-// Create an aggregator node client
+// Create a standard aggregator node client
 const aggregator = new AggregatorNodeClient({
   providerUrl: 'https://sepolia.infura.io/v3/YOUR_INFURA_KEY',
   contractAddress: '0x1234567890123456789012345678901234567890',
@@ -46,4 +48,23 @@ const aggregator = new AggregatorNodeClient({
 
 // Process a batch
 await aggregator.processBatch(batchNumber);
+
+// Example using the SMT-based aggregator node client
+const smtAggregator = new SMTAggregatorNodeClient({
+  providerUrl: 'https://sepolia.infura.io/v3/YOUR_INFURA_KEY',
+  contractAddress: '0x1234567890123456789012345678901234567890',
+  privateKey: 'YOUR_PRIVATE_KEY',
+  aggregatorAddress: '0xYOUR_AGGREGATOR_ADDRESS',
+  smtDepth: 32 // Optional: depth of the Sparse Merkle Tree (defaults to 32)
+});
+
+// Process a batch using Sparse Merkle Tree for hashroot generation
+await smtAggregator.processBatch(batchNumber);
+
+// Process all unprocessed batches
+await smtAggregator.processAllUnprocessedBatches();
+
+// Note: The SMT-based aggregator client uses the Sparse Merkle Tree from the
+// @unicitylabs/commons package to generate hashroots for batches. This provides
+// cryptographic proofs that can be verified on-chain or off-chain.
 */

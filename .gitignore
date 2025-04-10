@@ -33,3 +33,4 @@ ts-client/batch-test-output.txt
 ts-client/deploy-output.txt
 ts-client/perf-test-output.txt
 ts-client/temp-deploy.js
+temp_repos
