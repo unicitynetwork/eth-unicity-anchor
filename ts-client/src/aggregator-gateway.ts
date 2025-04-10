@@ -120,6 +120,20 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
         console.error('Error in request threshold batch creation:', error);
       }
     });
+    
+    // Listen for bulk commitment submissions and create batches if needed
+    this.on(EventType.RequestsSubmitted, async (_, data: { count: bigint, successCount: bigint }) => {
+      try {
+        const unprocessedCount = await this.getUnprocessedRequestCount();
+        
+        if (unprocessedCount >= BigInt(this.batchCreationThreshold)) {
+          console.log(`Threshold reached (${unprocessedCount} requests) after bulk submission. Creating new batch.`);
+          await this.createBatch();
+        }
+      } catch (error) {
+        console.error('Error in bulk submission batch creation:', error);
+      }
+    });
   }
 
   /**
@@ -158,13 +172,99 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
   }
 
   /**
-   * Process multiple commitment requests in a batch
+   * Submit multiple commitments in a single transaction
+   * @param requests Array of commitment requests to submit
+   * @returns Transaction result with success count
+   */
+  public async submitCommitments(
+    requests: CommitmentRequest[],
+  ): Promise<{ successCount: bigint; result: TransactionResult }> {
+    // Validate all requests first
+    const validRequests = requests.filter(request => this.validateCommitment(request));
+    
+    if (validRequests.length === 0) {
+      return {
+        successCount: BigInt(0),
+        result: {
+          success: false,
+          error: new Error('No valid commitment requests provided')
+        }
+      };
+    }
+    
+    // Convert to contract format
+    const contractRequests = validRequests.map(request => ({
+      requestID: typeof request.requestID === 'string' ? BigInt(request.requestID) : request.requestID,
+      payload: typeof request.payload === 'string' ? new TextEncoder().encode(request.payload) : request.payload,
+      authenticator: typeof request.authenticator === 'string' ? 
+        new TextEncoder().encode(request.authenticator) : request.authenticator
+    }));
+    
+    // Execute the transaction
+    const result = await this.executeTransaction('submitCommitments', [contractRequests]);
+    
+    // Get the success count
+    const successCount = result.success ? (result as any).successCount || BigInt(0) : BigInt(0);
+    
+    return { successCount, result };
+  }
+  
+  /**
+   * Submit multiple commitments and create a batch with them in a single transaction
+   * @param requests Array of commitment requests to submit
+   * @returns Transaction result with batch number and success count
+   */
+  public async submitAndCreateBatch(
+    requests: CommitmentRequest[],
+  ): Promise<{ batchNumber: bigint; successCount: bigint; result: TransactionResult }> {
+    // Validate all requests first
+    const validRequests = requests.filter(request => this.validateCommitment(request));
+    
+    if (validRequests.length === 0) {
+      return {
+        batchNumber: BigInt(0),
+        successCount: BigInt(0),
+        result: {
+          success: false,
+          error: new Error('No valid commitment requests provided')
+        }
+      };
+    }
+    
+    // Convert to contract format
+    const contractRequests = validRequests.map(request => ({
+      requestID: typeof request.requestID === 'string' ? BigInt(request.requestID) : request.requestID,
+      payload: typeof request.payload === 'string' ? new TextEncoder().encode(request.payload) : request.payload,
+      authenticator: typeof request.authenticator === 'string' ? 
+        new TextEncoder().encode(request.authenticator) : request.authenticator
+    }));
+    
+    // Execute the transaction
+    const result = await this.executeTransaction('submitAndCreateBatch', [contractRequests]);
+    
+    // Get the returned values
+    let batchNumber = BigInt(0);
+    let successCount = BigInt(0);
+    
+    if (result.success) {
+      batchNumber = (result as any).batchNumber || BigInt(0);
+      successCount = (result as any).successCount || BigInt(0);
+    }
+    
+    return { batchNumber, successCount, result };
+  }
+  
+  /**
+   * Process multiple commitment requests individually (legacy method)
    * @param requests Array of commitment requests to submit
    * @returns Array of results for each submission
+   * @deprecated Use submitCommitments instead for better gas efficiency
    */
   public async submitMultipleCommitments(
     requests: CommitmentRequest[],
   ): Promise<{ requestID: bigint; result: TransactionResult }[]> {
+    console.warn('submitMultipleCommitments is deprecated. Use submitCommitments for better gas efficiency.');
+    
     const results: { requestID: bigint; result: TransactionResult }[] = [];
 
     for (const request of requests) {

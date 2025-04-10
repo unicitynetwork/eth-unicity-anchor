@@ -82,6 +82,10 @@ export class UniCityAnchorClient {
     this.contract.on('RequestSubmitted', (requestID: bigint, payload: string) => {
       this.emitEvent(EventType.RequestSubmitted, { requestID, payload });
     });
+    
+    this.contract.on('RequestsSubmitted', (count: bigint, successCount: bigint) => {
+      this.emitEvent(EventType.RequestsSubmitted, { count, successCount });
+    });
 
     this.contract.on('BatchCreated', (batchNumber: bigint, requestCount: bigint) => {
       this.emitEvent(EventType.BatchCreated, { batchNumber, requestCount });

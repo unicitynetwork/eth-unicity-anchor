@@ -100,6 +100,7 @@ export interface SmtNode {
  */
 export enum EventType {
   RequestSubmitted = 'RequestSubmitted',
+  RequestsSubmitted = 'RequestsSubmitted',
   BatchCreated = 'BatchCreated',
   BatchProcessed = 'BatchProcessed',
   HashrootSubmitted = 'HashrootSubmitted',

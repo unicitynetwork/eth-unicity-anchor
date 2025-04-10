@@ -59,6 +59,17 @@ interface IAggregatorBatches {
      *   However, exactly same request can be submitted multiple times, but added just once into the global commitment storage.
      */
     function submitCommitment(uint256 requestID, bytes calldata payload, bytes calldata authenticator) external;
+    
+    /**
+     * @dev Submit multiple commitments into the pool of unprocessed commitment requests in a single transaction
+     * @param requests Array of commitment requests to submit
+     * @return successCount The number of successfully submitted commitments
+     * 
+     * For each commitment, the same rules apply as in submitCommitment:
+     * - If a requestID exists in a batch already with different payload/authenticator, that commitment is skipped
+     * - If a requestID is new or in unprocessed pool, it is added/updated
+     */
+    function submitCommitments(CommitmentRequest[] calldata requests) external returns (uint256 successCount);
 
     /**
      * @dev Creates a new batch from the current pool of all unprocessed commitments
@@ -72,6 +83,20 @@ interface IAggregatorBatches {
      * @return batchNumber The number of the newly created batch
      */
     function createBatchForRequests(uint256[] calldata requestIDs) external returns (uint256 batchNumber);
+    
+    /**
+     * @dev Submit multiple commitments and create a batch containing them in a single transaction
+     * @param commitmentRequests Array of commitment requests to submit
+     * @return batchNumber The number of the newly created batch
+     * @return successCount The number of successfully submitted commitments
+     * 
+     * This function combines submitCommitments and createBatchForRequests in a single atomic operation.
+     * First, it submits all the provided commitments, then creates a batch containing all successfully submitted requests.
+     * If all submissions fail, no batch is created and the function returns batch number 0.
+     */
+    function submitAndCreateBatch(CommitmentRequest[] calldata commitmentRequests) 
+        external 
+        returns (uint256 batchNumber, uint256 successCount);
 
     /**
      * @dev Returns the latest unprocessed batch
@@ -134,6 +159,11 @@ interface IAggregatorBatches {
      * @dev Event emitted when a new commitment request is added to the pool
      */
     event RequestSubmitted(uint256 indexed requestID, bytes payload);
+    
+    /**
+     * @dev Event emitted when multiple commitment requests are added to the pool in a batch operation
+     */
+    event RequestsSubmitted(uint256 count, uint256 successCount);
 
     /**
      * @dev Event emitted when a new batch is created
