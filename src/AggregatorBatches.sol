@@ -134,7 +134,7 @@ contract AggregatorBatches is IAggregatorBatches {
 
         emit RequestSubmitted(requestID, payload);
     }
-    
+
     /**
      * @dev Submit multiple commitments into the pool of unprocessed commitment requests in a single transaction
      * @param requests Array of commitment requests to submit
@@ -147,46 +147,46 @@ contract AggregatorBatches is IAggregatorBatches {
         returns (uint256)
     {
         uint256 successCount = 0;
-        
+
         for (uint256 i = 0; i < requests.length; i++) {
             CommitmentRequest calldata request = requests[i];
-            
+
             // Check if this request has been in a batch before
             if (requestAddedToBatch[request.requestID]) {
                 // Get the stored commitment data
                 CommitmentRequest storage existingCommitment = commitments[request.requestID];
-                
+
                 // Check if payload and authenticator match exactly
                 bytes32 existingPayloadHash = keccak256(existingCommitment.payload);
                 bytes32 newPayloadHash = keccak256(request.payload);
                 bytes32 existingAuthHash = keccak256(existingCommitment.authenticator);
                 bytes32 newAuthHash = keccak256(request.authenticator);
-                
+
                 // If either payload or authenticator differ, skip this request
                 if (existingPayloadHash != newPayloadHash || existingAuthHash != newAuthHash) {
                     continue; // Skip this request but continue processing others
                 }
-                
+
                 // If they match exactly, skip (don't add back to the pool)
                 successCount++;
                 continue;
             }
-            
+
             // Request is either in the unprocessed pool or brand new
             commitments[request.requestID] = CommitmentRequest({
                 requestID: request.requestID,
                 payload: request.payload,
                 authenticator: request.authenticator
             });
-            
+
             if (!unprocessedRequestIds.contains(request.requestID)) {
                 unprocessedRequestIds.add(request.requestID);
             }
-            
+
             emit RequestSubmitted(request.requestID, request.payload);
             successCount++;
         }
-        
+
         emit RequestsSubmitted(requests.length, successCount);
         return successCount;
     }
@@ -242,7 +242,7 @@ contract AggregatorBatches is IAggregatorBatches {
         require(validRequestIDs.length > 0, "No valid unprocessed request IDs provided");
         return _createBatchInternal(validRequestIDs);
     }
-    
+
     /**
      * @dev Submit multiple commitments and create a batch containing them in a single transaction
      * @param commitmentRequests Array of commitment requests to submit
@@ -256,66 +256,66 @@ contract AggregatorBatches is IAggregatorBatches {
         returns (uint256, uint256)
     {
         if (commitmentRequests.length == 0) return (0, 0);
-        
+
         // Process each commitment locally without using the external submitCommitments function
         uint256 successCount = 0;
         uint256[] memory successfulRequestIds = new uint256[](commitmentRequests.length);
-        
+
         for (uint256 i = 0; i < commitmentRequests.length; i++) {
             CommitmentRequest calldata request = commitmentRequests[i];
-            
+
             // Check if this request has been in a batch before
             if (requestAddedToBatch[request.requestID]) {
                 // Get the stored commitment data
                 CommitmentRequest storage existingCommitment = commitments[request.requestID];
-                
+
                 // Check if payload and authenticator match exactly
                 bytes32 existingPayloadHash = keccak256(existingCommitment.payload);
                 bytes32 newPayloadHash = keccak256(request.payload);
                 bytes32 existingAuthHash = keccak256(existingCommitment.authenticator);
                 bytes32 newAuthHash = keccak256(request.authenticator);
-                
+
                 // If either payload or authenticator differ, skip this request
                 if (existingPayloadHash != newPayloadHash || existingAuthHash != newAuthHash) {
                     continue; // Skip this request but continue processing others
                 }
-                
+
                 // If they match exactly, mark as success but don't add to unprocessed
                 successfulRequestIds[successCount] = request.requestID;
                 successCount++;
                 continue;
             }
-            
+
             // Request is either in the unprocessed pool or brand new
             commitments[request.requestID] = CommitmentRequest({
                 requestID: request.requestID,
                 payload: request.payload,
                 authenticator: request.authenticator
             });
-            
+
             if (!unprocessedRequestIds.contains(request.requestID)) {
                 unprocessedRequestIds.add(request.requestID);
             }
-            
+
             emit RequestSubmitted(request.requestID, request.payload);
             successfulRequestIds[successCount] = request.requestID;
             successCount++;
         }
-        
+
         emit RequestsSubmitted(commitmentRequests.length, successCount);
-        
+
         // If no commitments were successfully submitted, return early
         if (successCount == 0) return (0, 0);
-        
+
         // Create properly sized array of request IDs for batch creation
         uint256[] memory requestIds = new uint256[](successCount);
         for (uint256 i = 0; i < successCount; i++) {
             requestIds[i] = successfulRequestIds[i];
         }
-        
+
         // Create a batch with these request IDs
         uint256 batchNumber = _createBatchInternal(requestIds);
-        
+
         return (batchNumber, successCount);
     }
 

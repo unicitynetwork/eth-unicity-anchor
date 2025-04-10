@@ -4,6 +4,7 @@
 export const ABI = [
   // Events
   'event RequestSubmitted(uint256 indexed requestID, bytes payload)',
+  'event RequestsSubmitted(uint256 count, uint256 successCount)',
   'event BatchCreated(uint256 indexed batchNumber, uint256 requestCount)',
   'event BatchProcessed(uint256 indexed batchNumber, bytes hashroot)',
   'event HashrootSubmitted(uint256 indexed batchNumber, address indexed aggregator, bytes hashroot)',
@@ -24,8 +25,10 @@ export const ABI = [
 
   // Transaction functions
   'function submitCommitment(uint256 requestID, bytes calldata payload, bytes calldata authenticator) external',
+  'function submitCommitments(tuple(uint256 requestID, bytes payload, bytes authenticator)[] calldata requests) external returns (uint256 successCount)',
   'function createBatch() external returns (uint256 batchNumber)',
   'function createBatchForRequests(uint256[] calldata requestIDs) external returns (uint256 batchNumber)',
+  'function submitAndCreateBatch(tuple(uint256 requestID, bytes payload, bytes authenticator)[] calldata commitmentRequests) external returns (uint256 batchNumber, uint256 successCount)',
   'function submitHashroot(uint256 batchNumber, bytes calldata hashroot) external returns (bool success)',
 
   // Admin functions

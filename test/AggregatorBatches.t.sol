@@ -49,88 +49,86 @@ contract AggregatorBatchesTest is Test {
         // Verify batch was created
         assertEq(batchNumber, 1, "Batch number should be 1");
     }
-    
+
     function testSubmitCommitments() public {
         // Prepare multiple test commitments
         IAggregatorBatches.CommitmentRequest[] memory requests = new IAggregatorBatches.CommitmentRequest[](3);
-        
+
         requests[0] = IAggregatorBatches.CommitmentRequest({
             requestID: 101,
             payload: bytes("payload 1"),
             authenticator: bytes("auth 1")
         });
-        
+
         requests[1] = IAggregatorBatches.CommitmentRequest({
             requestID: 102,
             payload: bytes("payload 2"),
             authenticator: bytes("auth 2")
         });
-        
+
         requests[2] = IAggregatorBatches.CommitmentRequest({
             requestID: 103,
             payload: bytes("payload 3"),
             authenticator: bytes("auth 3")
         });
-        
+
         // Submit as aggregator1
         vm.prank(trustedAggregators[0]);
         uint256 successCount = aggregator.submitCommitments(requests);
-        
+
         // Verify all commitments were submitted successfully
         assertEq(successCount, 3, "All three commitments should be submitted successfully");
-        
+
         // Create batch
         vm.prank(trustedAggregators[0]);
         uint256 batchNumber = aggregator.createBatch();
-        
+
         // Verify batch was created
         assertEq(batchNumber, 1, "Batch number should be 1");
-        
+
         // Get batch contents
-        (IAggregatorBatches.CommitmentRequest[] memory batchRequests, bool processed, bytes memory hashroot) = 
+        (IAggregatorBatches.CommitmentRequest[] memory batchRequests, bool processed, bytes memory hashroot) =
             aggregator.getBatch(batchNumber);
-            
         // Verify batch contains our commitments
         assertEq(batchRequests.length, 3, "Batch should contain 3 commitments");
         assertEq(batchRequests[0].requestID, 101, "First commitment should be requestID 101");
         assertEq(batchRequests[1].requestID, 102, "Second commitment should be requestID 102");
         assertEq(batchRequests[2].requestID, 103, "Third commitment should be requestID 103");
     }
-    
+
     function testSubmitAndCreateBatch() public {
         // Prepare multiple test commitments
         IAggregatorBatches.CommitmentRequest[] memory requests = new IAggregatorBatches.CommitmentRequest[](3);
-        
+
         requests[0] = IAggregatorBatches.CommitmentRequest({
             requestID: 201,
             payload: bytes("payload 1"),
             authenticator: bytes("auth 1")
         });
-        
+
         requests[1] = IAggregatorBatches.CommitmentRequest({
             requestID: 202,
             payload: bytes("payload 2"),
             authenticator: bytes("auth 2")
         });
-        
+
         requests[2] = IAggregatorBatches.CommitmentRequest({
             requestID: 203,
             payload: bytes("payload 3"),
             authenticator: bytes("auth 3")
         });
-        
+
         // Submit commitments and create batch in one transaction
         vm.prank(trustedAggregators[0]);
         (uint256 batchNumber, uint256 successCount) = aggregator.submitAndCreateBatch(requests);
-        
+
         // Verify all commitments were submitted successfully and batch was created
         assertEq(successCount, 3, "All three commitments should be submitted successfully");
         assertEq(batchNumber, 1, "Batch number should be 1");
-        
+
         // Get batch contents
-        (IAggregatorBatches.CommitmentRequest[] memory batchRequests, bool processed, bytes memory hashroot) = 
+        (IAggregatorBatches.CommitmentRequest[] memory batchRequests, bool processed, bytes memory hashroot) =
             aggregator.getBatch(batchNumber);
-            
         // Verify batch contains our commitments
         assertEq(batchRequests.length, 3, "Batch should contain 3 commitments");
         assertEq(batchRequests[0].requestID, 201, "First commitment should be requestID 201");

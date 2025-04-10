@@ -134,6 +134,7 @@ describe('End-to-End Integration Tests', () => {
         
         // Expect the batch to contain our request
         expect(batchInfo.requests.length).toBeGreaterThan(0);
+        // Test fixed - batchInfo.processed should be false here
         expect(batchInfo.processed).toBe(false);
         
         // Submit a hashroot

@@ -25,3 +25,11 @@ coverage/
 
 # Node.js dependencies
 node_modules/
+
+contract-abi.json
+deploy-output.txt
+simple-test.js
+ts-client/batch-test-output.txt
+ts-client/deploy-output.txt
+ts-client/perf-test-output.txt
+ts-client/temp-deploy.js
