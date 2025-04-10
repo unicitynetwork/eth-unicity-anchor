@@ -9,6 +9,8 @@ on:
 
 env:
   FOUNDRY_PROFILE: ci
+  # If CODECOV_TOKEN is not available, tests will still run but coverage won't be uploaded
+  CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN || '' }}
 
 jobs:
   check:
@@ -57,7 +59,7 @@ jobs:
         run: forge coverage --report lcov
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v4
         with:
           file: ./lcov.info
           flags: solidity
@@ -72,7 +74,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
@@ -93,7 +95,7 @@ jobs:
         run: cd ts-client && npm run test:utils
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v4
         with:
           file: ./ts-client/coverage/lcov.info
           flags: typescript
@@ -113,7 +115,7 @@ jobs:
           submodules: recursive
 
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
@@ -129,17 +131,28 @@ jobs:
 
       - name: Run end-to-end integration tests
         run: |
+          # Print diagnostics
+          echo "Node version: $(node --version)"
+          echo "NPM version: $(npm --version)"
+          echo "Foundry version: $(forge --version)"
+          
+          # Make script executable
           chmod +x ./scripts/manual-e2e-test.sh
-          ./scripts/manual-e2e-test.sh
+          
+          # Run the tests with increased verbosity
+          VERBOSE=true ./scripts/manual-e2e-test.sh
 
       - name: Archive test logs
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: test-logs
           path: |
             anvil.log
             contract-address.txt
+            npm-debug.log*
+            e2e-test-output.log
+            ts-client/integration-test.log
             
   test-results:
     name: Summarize Test Results
