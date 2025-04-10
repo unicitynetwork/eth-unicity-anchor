@@ -49,6 +49,7 @@ export interface ClientOptions {
   contractAddress: string;
   privateKey?: string;
   signer?: any; // Can be an ethers.Wallet or ethers.Signer
+  abi?: any[]; // Optional custom ABI to use instead of the default
   maxRetries?: number;
   retryDelay?: number;
   timeoutMs?: number;
@@ -84,6 +85,9 @@ export interface TransactionResult {
   blockNumber?: number;
   gasUsed?: bigint;
   error?: Error;
+  // Additional fields for batch operations
+  successCount?: bigint;      // Number of successfully processed commitments
+  batchNumber?: bigint;       // Batch number created (for createBatch operations)
 }
 
 /**

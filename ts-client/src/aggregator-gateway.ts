@@ -203,8 +203,11 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
     // Execute the transaction
     const result = await this.executeTransaction('submitCommitments', [contractRequests]);
     
-    // Get the success count
-    const successCount = result.success ? (result as any).successCount || BigInt(0) : BigInt(0);
+    // Get the success count from the transaction result
+    // The executeTransaction method now extracts this from the RequestsSubmitted event
+    const successCount = result.success && 'successCount' in result 
+      ? result.successCount as bigint 
+      : BigInt(0);
     
     return { successCount, result };
   }
@@ -242,13 +245,18 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
     // Execute the transaction
     const result = await this.executeTransaction('submitAndCreateBatch', [contractRequests]);
     
-    // Get the returned values
+    // Get the returned values from the transaction result
+    // The executeTransaction method now extracts these from events emitted by the contract
     let batchNumber = BigInt(0);
     let successCount = BigInt(0);
     
     if (result.success) {
-      batchNumber = (result as any).batchNumber || BigInt(0);
-      successCount = (result as any).successCount || BigInt(0);
+      if ('batchNumber' in result) {
+        batchNumber = result.batchNumber as bigint;
+      }
+      if ('successCount' in result) {
+        successCount = result.successCount as bigint;
+      }
     }
     
     return { batchNumber, successCount, result };

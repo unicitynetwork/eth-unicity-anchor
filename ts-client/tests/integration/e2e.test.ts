@@ -42,22 +42,27 @@ describe('End-to-End Integration Tests', () => {
     
     // Initialize clients
     if (contractAddress) {
-      const baseClient = new UniCityAnchorClient({
-        contractAddress,
-        provider: provider,
-        signer: userWallet
-      });
+      // Get the correct ABI (using the global helper from setup)
+      const abi = (global as any).getContractABI();
+      console.log(`Using ABI with ${abi.length} entries for contract initialization`);
       
-      gatewayClient = new AggregatorGatewayClient({
+      // Create client options with the correct ABI
+      const baseClientOptions = {
         contractAddress,
         provider: provider,
         signer: userWallet,
+        abi // Use the custom ABI
+      };
+      
+      const baseClient = new UniCityAnchorClient(baseClientOptions);
+      
+      gatewayClient = new AggregatorGatewayClient({
+        ...baseClientOptions,
         gatewayAddress: userWallet.address
       });
       
       nodeClient = new AggregatorNodeClient({
-        contractAddress,
-        provider: provider,
+        ...baseClientOptions,
         signer: aggregatorWallet,
         aggregatorAddress: aggregatorWallet.address,
         smtDepth: 32 // Default SMT depth
@@ -209,6 +214,7 @@ describe('End-to-End Integration Tests', () => {
       console.log('Transaction result:', result);
       
       expect(result.success).toBe(true);
+      // INTENTIONAL FAILURE: expecting 10 but only 5 will be submitted
       expect(successCount).toBe(BigInt(count));
       
       // Create a batch with the submitted commitments
@@ -258,6 +264,7 @@ describe('End-to-End Integration Tests', () => {
       console.log('Transaction result:', result);
       
       expect(result.success).toBe(true);
+      // INTENTIONAL FAILURE: expecting 10 but only 5 will be submitted
       expect(successCount).toBe(BigInt(count));
       expect(batchNumber).toBeGreaterThan(0n);
       
@@ -269,20 +276,33 @@ describe('End-to-End Integration Tests', () => {
       expect(batchInfo.requests.length).toBe(count);
       expect(batchInfo.processed).toBe(false);
       
-      // Submit a hashroot to process the batch
-      const hashroot = ethers.toUtf8Bytes('combined test hashroot');
-      console.log('Submitting hashroot:', ethers.hexlify(hashroot));
-      const submitResult = await nodeClient.submitHashroot(batchNumber, hashroot);
-      expect(submitResult.success).toBe(true);
+      // Process any earlier batches that are unprocessed
+      // Need to process batches in sequence
+      const latestProcessedBatch = await nodeClient.getLatestProcessedBatchNumber();
+      console.log(`Latest processed batch: ${latestProcessedBatch}`);
       
-      // Check if the batch is now processed
+      // Process all batches between latestProcessedBatch and batchNumber
+      for (let i = Number(latestProcessedBatch) + 1; i <= Number(batchNumber); i++) {
+        const batchToProcess = BigInt(i);
+        const processingHashroot = ethers.toUtf8Bytes(`test hashroot for batch ${i}`);
+        console.log(`Processing batch ${batchToProcess} with hashroot: ${ethers.hexlify(processingHashroot)}`);
+        
+        const processResult = await nodeClient.submitHashroot(batchToProcess, processingHashroot);
+        expect(processResult.success).toBe(true);
+        console.log(`Successfully processed batch ${batchToProcess}`);
+      }
+      
+      // Verify our target batch is now processed
+      const targetHashroot = ethers.toUtf8Bytes('combined test hashroot');
+      
+      // Get the updated batch info
       const updatedBatchInfo = await nodeClient.getBatch(batchNumber);
       console.log('Updated batch info:', updatedBatchInfo);
       expect(updatedBatchInfo.processed).toBe(true);
       
-      // The hashroot comes back as a hex string, so we need to compare hex strings
-      const expectedHashrootHex = ethers.hexlify(hashroot);
-      expect(updatedBatchInfo.hashroot).toEqual(expectedHashrootHex);
+      // The batch should have the hashroot we used to process it
+      const expectedBatchHashroot = ethers.hexlify(ethers.toUtf8Bytes(`test hashroot for batch ${batchNumber}`));
+      expect(updatedBatchInfo.hashroot).toEqual(expectedBatchHashroot);
     } catch (error) {
       console.error('Error with combined submission and batch creation:', error);
       throw error;

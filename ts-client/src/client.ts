@@ -60,7 +60,11 @@ export class UniCityAnchorClient {
     }
 
     // Initialize contract with provider
-    this.contract = new ethers.Contract(options.contractAddress, ABI, this.provider);
+    this.contract = new ethers.Contract(
+      options.contractAddress, 
+      options.abi || ABI, // Use custom ABI if provided
+      this.provider
+    );
 
     // Initialize signer if provided
     if (options.signer) {
@@ -301,10 +305,12 @@ export class UniCityAnchorClient {
   }
 
   /**
-   * Execute a transaction with retry logic
+   * Execute a transaction with retry logic and extract any event data
    * @param method The contract method to call
    * @param args Arguments for the method
-   * @returns Transaction result
+   * @returns Transaction result with additional event data for certain methods:
+   *          - For submitCommitments: includes successCount from RequestsSubmitted event
+   *          - For submitAndCreateBatch: includes successCount and batchNumber from events
    */
   protected async executeTransaction(method: string, args: any[]): Promise<TransactionResult> {
     if (!this.signer) {
@@ -334,11 +340,64 @@ export class UniCityAnchorClient {
         const receipt = await tx.wait();
         console.log(`Transaction ${tx.hash} confirmed in block ${receipt.blockNumber}`);
 
+        // Look for the event that contains the success count
+        if (method === 'submitCommitments' || method === 'submitAndCreateBatch') {
+          // Find the RequestsSubmitted event in the receipt logs
+          const iface = new ethers.Interface(this.options.abi || ABI);
+          
+          // First, collect all relevant event data
+          let successCount;
+          let batchNumber;
+          
+          for (const log of receipt.logs) {
+            try {
+              const parsedLog = iface.parseLog(log);
+              
+              // Extract success count from RequestsSubmitted events
+              if (parsedLog && parsedLog.name === 'RequestsSubmitted') {
+                successCount = parsedLog.args.successCount || BigInt(0);
+              }
+              
+              // Extract batch number from BatchCreated events
+              if (parsedLog && parsedLog.name === 'BatchCreated') {
+                batchNumber = parsedLog.args.batchNumber || BigInt(0);
+              }
+            } catch (e) {
+              // Skip logs that can't be parsed
+              continue;
+            }
+          }
+          
+          // For submitAndCreateBatch we need both successCount and batchNumber
+          if (method === 'submitAndCreateBatch') {
+            return {
+              success: true,
+              transactionHash: receipt.hash,
+              blockNumber: receipt.blockNumber,
+              gasUsed: receipt.gasUsed,
+              successCount,
+              batchNumber
+            };
+          }
+          
+          // For submitCommitments, we only need successCount
+          if (method === 'submitCommitments' && successCount !== undefined) {
+            return {
+              success: true,
+              transactionHash: receipt.hash,
+              blockNumber: receipt.blockNumber,
+              gasUsed: receipt.gasUsed,
+              successCount
+            };
+          }
+        }
+        
         return {
           success: true,
           transactionHash: receipt.hash,
           blockNumber: receipt.blockNumber,
           gasUsed: receipt.gasUsed,
+          ...(receipt.batchNumber ? { batchNumber: receipt.batchNumber } : {})
         };
       } catch (error: any) {
         lastError = error;
