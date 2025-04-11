@@ -11,11 +11,14 @@ npm install eth-unicity-anchor-client
 ## Features
 
 - **Aggregator Gateway Client**: Submit commitments and create batches
+- **Enhanced Aggregator Gateway**: Compatible with aggregators_net interface with added features
 - **Aggregator Node Client**: Process batches and submit hashroots
 - **Sparse Merkle Tree Integration**: Build and verify SMT data structures
 - **Event Handling**: Listen for contract events
 - **Automatic Processing**: Optional automatic batch creation and processing
 - **Merkle Proof Generation**: Generate and verify proofs for commitments
+- **Authentication**: Support for API keys, JWT tokens, and Ethereum signatures
+- **Batch Operations**: Submit multiple commitments or entire batches in a single call
 
 ## Usage
 
@@ -68,6 +71,126 @@ async function createBatchForRequests(requestIds) {
   
   if (result.success) {
     console.log(`Created batch #${batchNumber} with specific requests`);
+  }
+}
+```
+
+### Enhanced Aggregator Gateway with Authentication
+
+```typescript
+import { 
+  AggregatorGateway, 
+  AuthMethod, 
+  SubmitCommitmentStatus,
+  BatchSubmissionDto
+} from 'eth-unicity-anchor-client';
+import { ethers } from 'ethers';
+
+// Create enhanced gateway with API key authentication
+const gateway = new AggregatorGateway({
+  providerUrl: 'https://sepolia.infura.io/v3/YOUR_INFURA_KEY',
+  contractAddress: '0x1234567890123456789012345678901234567890',
+  privateKey: 'YOUR_PRIVATE_KEY',
+  gatewayAddress: '0xYOUR_GATEWAY_ADDRESS',
+  autoCreateBatches: true,
+  // Authentication configuration
+  authMethod: AuthMethod.API_KEY,
+  apiKeys: {
+    'testkey123': {
+      name: 'Test API Key',
+      role: 'submitter',
+      permissions: ['batch:submit', 'batch:read']
+    }
+  },
+  // Optional: configure other auth methods
+  jwtSecret: 'your-jwt-secret-key',
+  trustedSigners: ['0xYourTrustedSignerAddress']
+});
+
+// Submit a single commitment (compatible with aggregators_net interface)
+async function submitSingleCommitment() {
+  const result = await gateway.submitCommitment({
+    requestId: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+    transactionHash: '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
+    authenticator: {
+      publicKey: '0x1111111111111111111111111111111111111111111111111111111111111111',
+      stateHash: '0x2222222222222222222222222222222222222222222222222222222222222222',
+      signature: '0x3333333333333333333333333333333333333333333333333333333333333333'
+    }
+  });
+  
+  console.log(`Commitment status: ${result.status}`);
+}
+
+// Submit multiple commitments in one call
+async function submitMultipleCommitments() {
+  const multipleCommitments = [
+    {
+      requestId: '0xaaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111',
+      transactionHash: '0xbbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222',
+      authenticator: {
+        publicKey: '0x1111111111111111111111111111111111111111111111111111111111111111',
+        stateHash: '0x2222222222222222222222222222222222222222222222222222222222222222',
+        signature: '0x3333333333333333333333333333333333333333333333333333333333333333'
+      }
+    },
+    // Additional commitments...
+  ];
+
+  const result = await gateway.submitMultipleCommitments(
+    multipleCommitments,
+    { apiKey: 'testkey123' }
+  );
+  
+  console.log(`Processed ${result.processedCount} commitments`);
+  if (result.batchCreated) {
+    console.log(`Created batch #${result.batchNumber}`);
+  }
+}
+
+// Submit an entire batch with Ethereum signature authentication
+async function submitBatchWithSignature() {
+  const wallet = new ethers.Wallet('YOUR_PRIVATE_KEY');
+  const message = `Submit batch to aggregator. Timestamp: ${Date.now()}`;
+  const signature = await wallet.signMessage(message);
+  
+  const batch: BatchSubmissionDto = {
+    commitments: [
+      {
+        requestID: '0xeeee3333eeee3333eeee3333eeee3333eeee3333eeee3333eeee3333eeee3333',
+        payload: '0xffff4444ffff4444ffff4444ffff4444ffff4444ffff4444ffff4444ffff4444',
+        authenticator: '0x111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222222222222222222222222222222222223333333333333333333333333333333333333333333333333333333333333333'
+      },
+      // Additional commitments...
+    ]
+  };
+  
+  const result = await gateway.submitBatch(
+    batch,
+    { 
+      signature: {
+        message,
+        signature,
+        signer: wallet.address
+      } 
+    }
+  );
+  
+  if (result.success) {
+    console.log(`Created batch #${result.batchNumber} with ${result.successCount} commitments`);
+  }
+}
+
+// Get inclusion proof for a commitment
+async function getInclusionProof() {
+  const proof = await gateway.getInclusionProof(
+    '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef'
+  );
+  
+  if (proof) {
+    console.log('Proof obtained:', proof);
+  } else {
+    console.log('Proof not found');
   }
 }
 ```
@@ -167,6 +290,33 @@ new AggregatorGatewayClient(config: GatewayConfig)
 - `stopAutoBatchCreation()`: Stop automatic batch creation
 - `validateCommitment(request)`: Validate a commitment request
 - `submitMultipleCommitments(requests)`: Submit multiple commitments in sequence
+
+### `AggregatorGateway`
+
+Enhanced client implementing the aggregators_net interface with additional features.
+
+#### Constructor
+
+```typescript
+new AggregatorGateway(config: AuthenticatedGatewayConfig)
+```
+
+#### Methods
+
+- `submitCommitment(request, authToken?)`: Submit a single commitment (compatible with aggregators_net)
+- `submitMultipleCommitments(requests, authData)`: Submit multiple commitments in one call
+- `submitBatch(batch, authData)`: Submit an entire batch directly
+- `getInclusionProof(requestId)`: Get inclusion proof for a request
+- `getNoDeleteProof()`: Get no deletion proof
+- `startAutoBatchCreation()`: Start automatic batch creation
+- `stopAutoBatchCreation()`: Stop automatic batch creation
+- `submitCommitmentLegacy(requestID, payload, authenticator)`: Legacy method for backward compatibility
+
+#### Authentication Methods
+
+- API Key: Simple key-based authentication with permission checking
+- JWT Token: JSON Web Token validation with permission checking
+- Ethereum Signature: Validation of signed messages against trusted addresses
 
 ### `AggregatorNodeClient`
 

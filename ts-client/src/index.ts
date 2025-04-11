@@ -7,6 +7,13 @@ export * from './aggregator-node-smt';
 export * from './utils';
 export { ABI } from './abi';
 
+// Export gateway types
+export * from './gateway-types/DataHash';
+export * from './gateway-types/RequestId';
+export * from './gateway-types/Authenticator';
+export * from './gateway-types/Commitment';
+export * from './gateway-types/InclusionProof';
+
 // Example usage:
 /*
 import { 
