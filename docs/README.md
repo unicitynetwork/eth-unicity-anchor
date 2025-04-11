@@ -14,6 +14,8 @@ Welcome to the documentation for the Ethereum Unicity Anchor system. This direct
 
 - [**Deployment Guide**](DEPLOYMENT.md) - Step-by-step instructions for deploying the system to various networks, with configuration options and security considerations.
 
+- [**Aggregator Gateway Guide**](AGGREGATOR_GATEWAY_GUIDE.md) - Detailed documentation on setting up and using the Aggregator Gateway, with code examples for various use cases.
+
 ## System Overview
 
 The Ethereum Unicity Anchor provides a trustless framework for processing user commitments with guaranteed consistency across all participants. It enables multiple trusted aggregator services to collect, process, and verify commitment requests in an orderly, immutable manner.
