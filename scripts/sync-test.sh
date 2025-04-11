@@ -342,7 +342,7 @@ log "Synchronization test output will be written to $SYNC_TEST_LOG"
 log "Starting synchronization tests with timeout of 180 seconds..."
 # Temporarily disable set -e to prevent script from exiting when tests fail
 set +e
-CONTRACT_ADDRESS=$CONTRACT_ADDRESS FORCE_COLOR=0 npx jest --config=jest.integration.config.js tests/integration/gateway-sync-test.ts --verbose --forceExit --testTimeout=180000 > $SYNC_TEST_LOG 2>&1
+CONTRACT_ADDRESS=$CONTRACT_ADDRESS FORCE_COLOR=0 npx jest --config=jest.integration.config.js tests/integration/gateway-sync.test.ts --verbose --forceExit --testTimeout=180000 > $SYNC_TEST_LOG 2>&1
 TEST_EXIT_CODE=$?
 # Re-enable set -e
 set -e

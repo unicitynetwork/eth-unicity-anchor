@@ -305,9 +305,11 @@ describe('Gateway SMT Synchronization Tests', () => {
       autoProcessing: 0
     });
     
-    // Manually trigger sync to make it easily observable
+    // Since syncWithOnChainState is protected, we need to create a workaround for testing
+    // This technique uses a temporary function to access the protected method
     console.log('Triggering manual synchronization...');
-    await newAggregator.syncWithOnChainState();
+    // Cast to any to access protected method for testing purposes
+    await (newAggregator as any).syncWithOnChainState();
     
     // Verify we've processed all batches by checking the processed batches set
     // Access the private property for testing purposes
@@ -403,9 +405,9 @@ describe('Gateway SMT Synchronization Tests', () => {
     console.warn = warnMock;
     
     try {
-      // Manually trigger sync
+      // Manually trigger sync - using cast to access protected method
       console.log('Triggering synchronization to detect hashroot mismatch...');
-      await mismatchDetector.syncWithOnChainState();
+      await (mismatchDetector as any).syncWithOnChainState();
       
       // Check if we detected the mismatch
       const mismatchWarningCalled = warnMock.mock.calls.some(call => 
