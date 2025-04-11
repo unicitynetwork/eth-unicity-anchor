@@ -143,6 +143,17 @@ export class SMTAggregatorNodeClient extends AggregatorNodeClient {
     console.log(`[SMT-Process] Starting batch processing for batch ${batchNumber}`);
     
     try {
+      const batchKey = batchNumber.toString();
+      
+      // Check if this batch has already been processed by this instance
+      if (this.processedBatches.has(batchKey)) {
+        console.log(`[SMT-Process] Batch ${batchNumber} already processed by this instance, skipping`);
+        return {
+          success: false,
+          error: new Error(`Batch ${batchNumber} already processed by this instance`),
+        };
+      }
+      
       // Get the batch info with retry mechanism
       let retries = 3;
       let batchInfo;
@@ -386,6 +397,8 @@ export class SMTAggregatorNodeClient extends AggregatorNodeClient {
           
           if (updatedBatchInfo.processed) {
             verifyResult = true;
+            // Add to processed batches to avoid duplicate processing
+            this.processedBatches.add(batchNumber.toString());
             console.log(`[SMT-Process] Batch ${batchNumber} verified as processed on attempt ${6-verifyRetries}`);
             break;
           } else {
@@ -440,6 +453,7 @@ export class SMTAggregatorNodeClient extends AggregatorNodeClient {
 
   /**
    * Process all unprocessed batches up to the latest batch
+   * Overrides the base class implementation to add SMT-specific logging
    * 
    * @returns Array of transaction results
    */
@@ -447,20 +461,52 @@ export class SMTAggregatorNodeClient extends AggregatorNodeClient {
     const latestBatchNumber = await this.getLatestBatchNumber();
     const latestProcessedBatchNumber = await this.getLatestProcessedBatchNumber();
     
-    console.log(`Processing all unprocessed batches from ${latestProcessedBatchNumber + 1n} to ${latestBatchNumber}`);
+    console.log(`[SMT-Process] Processing all unprocessed batches from ${latestProcessedBatchNumber + 1n} to ${latestBatchNumber}`);
+    
+    // For performance monitoring
+    const startTime = Date.now();
+    let processedCount = 0;
     
     const results: TransactionResult[] = [];
     
     // Process each unprocessed batch
     for (let i = latestProcessedBatchNumber + 1n; i <= latestBatchNumber; i++) {
+      // Skip batches that have already been processed by this instance
+      const batchKey = i.toString();
+      if (this.processedBatches.has(batchKey)) {
+        console.log(`[SMT-Process] Skipping batch ${i} as it was already processed by this instance`);
+        // Add a result to indicate this batch was skipped but previously processed
+        results.push({
+          success: true, // Count as success since we processed it before
+          message: `Batch ${i} already processed by this instance`,
+          skipped: true
+        });
+        continue;
+      }
+      
       try {
+        console.log(`[SMT-Process] Processing batch ${i}...`);
         const result = await this.processBatch(i);
         results.push(result);
+        
+        if (result.success) {
+          processedCount++;
+        } else {
+          console.log(`[SMT-Process] Note: Batch ${i} processing was not successful: ${result.error?.message}`);
+        }
       } catch (error) {
-        console.error(`Error processing batch ${i}:`, error);
-        throw error;
+        console.error(`[SMT-Process] Error processing batch ${i}:`, error);
+        // Continue with next batch instead of throwing
+        results.push({
+          success: false,
+          error: error instanceof Error ? error : new Error(String(error)),
+          message: `Failed to process batch ${i}`
+        });
       }
     }
+    
+    const elapsedTime = Date.now() - startTime;
+    console.log(`[SMT-Process] Processed ${processedCount} batches in ${elapsedTime}ms`);
     
     return results;
   }

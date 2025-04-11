@@ -19,18 +19,32 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
   private readonly smtDepth: number;
   private readonly batchProcessingInterval: number;
   private batchProcessingTimer?: NodeJS.Timeout;
+  // Track which batches have been processed by this instance
+  protected processedBatches: Set<string> = new Set();
   private smt: any; // Will be initialized when needed
 
   constructor(config: AggregatorConfig) {
     super(config);
     this.aggregatorAddress = config.aggregatorAddress;
     this.smtDepth = config.smtDepth || 32; // Default to 32 levels for SMT
-    this.batchProcessingInterval = config.batchProcessingInterval || 5 * 60 * 1000; // 5 minutes default
+    
+    // Support both the new autoProcessing parameter and backward compatibility
+    let autoProcessingEnabled = false;
+    
+    if (typeof config.autoProcessing === 'number') {
+      // New style: autoProcessing in seconds
+      this.batchProcessingInterval = config.autoProcessing > 0 ? config.autoProcessing * 1000 : 0;
+      autoProcessingEnabled = this.batchProcessingInterval > 0;
+    } else {
+      // Legacy style
+      this.batchProcessingInterval = config.batchProcessingInterval || 5 * 60 * 1000; // 5 minutes default
+      autoProcessingEnabled = !!config.autoProcessBatches;
+    }
 
     // Will initialize the Merkle Tree when processing batches
 
     // Start automatic batch processing if enabled
-    if (config.autoProcessBatches) {
+    if (autoProcessingEnabled) {
       this.startAutoBatchProcessing();
     }
   }
@@ -112,7 +126,15 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
       const rootBytes = hexToBytes(root);
 
       // Submit the hashroot
-      return await this.submitHashroot(bn, rootBytes);
+      const result = await this.submitHashroot(bn, rootBytes);
+      
+      // If successful, add to processed batches to avoid duplicate processing
+      if (result.success) {
+        this.processedBatches.add(bn.toString());
+        console.log(`Batch ${bn} processed successfully and added to processed list`);
+      }
+      
+      return result;
     } catch (error: any) {
       return {
         success: false,
@@ -129,6 +151,54 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
   }
 
   /**
+   * Process all unprocessed batches
+   * @returns Array of transaction results
+   */
+  public async processAllUnprocessedBatches(): Promise<TransactionResult[]> {
+    const latestBatchNumber = await this.getLatestBatchNumber();
+    const latestProcessedBatchNumber = await this.getLatestProcessedBatchNumber();
+    
+    console.log(`Processing all unprocessed batches from ${latestProcessedBatchNumber + 1n} to ${latestBatchNumber}`);
+    
+    const results: TransactionResult[] = [];
+    
+    // Process each unprocessed batch
+    for (let i = latestProcessedBatchNumber + 1n; i <= latestBatchNumber; i++) {
+      // Skip batches that have already been processed by this instance
+      if (this.processedBatches.has(i.toString())) {
+        console.log(`Skipping batch ${i} as it was already processed by this instance`);
+        // Add a result to indicate this batch was skipped but previously processed
+        results.push({
+          success: true, // Count as success since we processed it before
+          message: `Batch ${i} already processed by this instance`,
+          skipped: true
+        });
+        continue;
+      }
+      
+      try {
+        console.log(`Processing batch ${i}...`);
+        const result = await this.processBatch(i);
+        results.push(result);
+        
+        if (!result.success) {
+          console.log(`Note: Batch ${i} processing was not successful: ${result.error?.message}`);
+        }
+      } catch (error) {
+        console.error(`Error processing batch ${i}:`, error);
+        // Continue with next batch instead of throwing
+        results.push({
+          success: false,
+          error: error instanceof Error ? error : new Error(String(error)),
+          message: `Failed to process batch ${i}`
+        });
+      }
+    }
+    
+    return results;
+  }
+
+  /**
    * Start automatic batch processing
    */
   public startAutoBatchProcessing(): void {
@@ -139,37 +209,43 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
     // Process batches when the timer fires
     this.batchProcessingTimer = setInterval(async () => {
       try {
-        const latestProcessed = await this.getLatestProcessedBatchNumber();
-        const latestBatch = await this.getLatestBatchNumber();
-
-        if (latestBatch > latestProcessed) {
-          const nextBatchToProcess = latestProcessed + BigInt(1);
-          console.log(`Processing batch ${nextBatchToProcess}`);
-          await this.processBatch(nextBatchToProcess);
+        console.log(`[AutoProcess] Checking for unprocessed batches at ${new Date().toISOString()}`);
+        const results = await this.processAllUnprocessedBatches();
+        
+        if (results.length > 0) {
+          const successCount = results.filter(r => r.success).length;
+          console.log(`[AutoProcess] Processed ${results.length} batches, ${successCount} successful`);
         } else {
-          console.log('No unprocessed batches available');
+          console.log('[AutoProcess] No unprocessed batches available');
         }
       } catch (error) {
-        console.error('Error in auto batch processing:', error);
+        console.error('[AutoProcess] Error in auto batch processing:', error);
       }
     }, this.batchProcessingInterval);
 
     // Also listen for new batch created events to process them
     this.on(EventType.BatchCreated, async (_, data: { batchNumber: bigint }) => {
       try {
+        // Skip if already processed by this instance
+        const batchKey = data.batchNumber.toString();
+        if (this.processedBatches.has(batchKey)) {
+          console.log(`[BatchCreated] Batch ${data.batchNumber} already processed by this instance, skipping`);
+          return;
+        }
+        
         const latestProcessed = await this.getLatestProcessedBatchNumber();
 
         // Check if this is the next batch to process
         if (data.batchNumber === latestProcessed + BigInt(1)) {
-          console.log(`New batch ${data.batchNumber} created. Processing...`);
+          console.log(`[BatchCreated] New batch ${data.batchNumber} created. Processing...`);
           await this.processBatch(data.batchNumber);
         } else {
           console.log(
-            `New batch ${data.batchNumber} created, but not next in sequence. Current processed: ${latestProcessed}`,
+            `[BatchCreated] New batch ${data.batchNumber} created, but not next in sequence. Current processed: ${latestProcessed}`,
           );
         }
       } catch (error) {
-        console.error('Error in event-triggered batch processing:', error);
+        console.error('[BatchCreated] Error in event-triggered batch processing:', error);
       }
     });
   }

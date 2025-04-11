@@ -62,8 +62,20 @@ export interface ClientOptions {
 export interface AggregatorConfig extends ClientOptions {
   aggregatorAddress: string;
   smtDepth: number;
+  /**
+   * @deprecated Use autoProcessing instead
+   */
   batchProcessingInterval?: number;
+  /**
+   * @deprecated Use autoProcessing instead
+   */
   autoProcessBatches?: boolean;
+  /**
+   * Time in seconds between batch processing attempts.
+   * If set to a non-zero value, automatic batch processing will be enabled.
+   * Default: 0 (disabled)
+   */
+  autoProcessing?: number;
 }
 
 /**
@@ -90,6 +102,10 @@ export interface TransactionResult {
   batchNumber?: bigint;       // Batch number created (for createBatch operations)
   // Additional fields for extended information
   message?: string;           // Informational message about the transaction
+  /**
+   * Indicates this was a skipped operation because it was previously processed
+   */
+  skipped?: boolean;
 }
 
 /**

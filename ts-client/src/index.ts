@@ -50,10 +50,11 @@ const aggregator = new AggregatorNodeClient({
   privateKey: 'YOUR_PRIVATE_KEY',
   aggregatorAddress: '0xYOUR_AGGREGATOR_ADDRESS',
   smtDepth: 32,
-  autoProcessBatches: true
+  // Auto-process batches every 30 seconds (specified in seconds)
+  autoProcessing: 30
 });
 
-// Process a batch
+// Process a specific batch manually
 await aggregator.processBatch(batchNumber);
 
 // Example using the SMT-based aggregator node client
@@ -62,7 +63,9 @@ const smtAggregator = new SMTAggregatorNodeClient({
   contractAddress: '0x1234567890123456789012345678901234567890',
   privateKey: 'YOUR_PRIVATE_KEY',
   aggregatorAddress: '0xYOUR_AGGREGATOR_ADDRESS',
-  smtDepth: 32 // Optional: depth of the Sparse Merkle Tree (defaults to 32)
+  smtDepth: 32, // Optional: depth of the Sparse Merkle Tree (defaults to 32)
+  // Auto-process batches every 60 seconds
+  autoProcessing: 60
 });
 
 // Process a batch using Sparse Merkle Tree for hashroot generation
