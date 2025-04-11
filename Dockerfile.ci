@@ -30,9 +30,11 @@ COPY . /workspace/
 # Make scripts executable
 RUN chmod +x /workspace/scripts/run-ci-locally.sh
 RUN chmod +x /workspace/scripts/manual-e2e-test.sh
+RUN chmod +x /workspace/scripts/sync-test.sh 2>/dev/null || true
 
 # Create symbolic links to ensure scripts are accessible
 RUN ln -sf /workspace/scripts/manual-e2e-test.sh /usr/local/bin/manual-e2e-test.sh
+RUN ln -sf /workspace/scripts/sync-test.sh /usr/local/bin/sync-test.sh 2>/dev/null || true
 
 # Set entrypoint
 ENTRYPOINT ["/workspace/scripts/run-ci-locally.sh"]
