@@ -355,14 +355,57 @@ npm run build
 
 ### Testing
 
+Run all tests:
+
 ```bash
-npm run test
+npm run test:all
 ```
+
+Run only unit tests:
+
+```bash
+npm run test:unit
+```
+
+Run only integration tests:
+
+```bash
+npm run test:integration
+```
+
+Run a specific test file:
+
+```bash
+npm test -- -t "AggregatorGateway"
+```
+
+### Test Coverage
+
+The library includes comprehensive test suites for all components:
+
+- **Unit Tests**: Test individual methods and classes in isolation
+- **Integration Tests**: Test interactions between components
+- **Mock Tests**: Test with mocked HTTP clients and contract interactions
+- **SMT Integration Tests**: Test the Sparse Merkle Tree implementation
+
+The AggregatorGateway component has dedicated tests that verify:
+
+- Commitment submission with various authentication methods
+- Batch operations and multiple commitment submission
+- Hashroot generation and submission
+- Inclusion proof generation and verification
+- Error handling and edge cases
 
 ### Linting
 
 ```bash
 npm run lint
+```
+
+### Formatting
+
+```bash
+npm run format
 ```
 
 ## License
