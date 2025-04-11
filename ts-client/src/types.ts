@@ -21,6 +21,15 @@ export interface CommitmentRequestDto {
 }
 
 /**
+ * Batch request interface for processing
+ */
+export interface BatchRequest {
+  requestID: string;
+  payload: string; // hex string
+  authenticator: string; // hex string
+}
+
+/**
  * Represents a batch of commitment requests
  */
 export interface Batch {

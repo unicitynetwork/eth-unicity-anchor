@@ -5,6 +5,7 @@ import {
   TransactionResult,
   EventType,
   SmtNode,
+  BatchRequest,
 } from './types';
 import { StandardMerkleTree } from '@openzeppelin/merkle-tree';
 import { ethers } from 'ethers';
