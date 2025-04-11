@@ -168,15 +168,17 @@ run_test_workflow() {
   
   # Run integration tests if enabled
   if [[ "$SKIP_INTEGRATION_TESTS" != "true" ]]; then
-    # First try to ensure the script is executable wherever it might be
+    # First try to ensure the scripts are executable wherever they might be
     chmod +x ./scripts/manual-e2e-test.sh 2>/dev/null || true
     chmod +x /workspace/scripts/manual-e2e-test.sh 2>/dev/null || true
+    chmod +x ./scripts/sync-test.sh 2>/dev/null || true
+    chmod +x /workspace/scripts/sync-test.sh 2>/dev/null || true
     
-    # Try to find the script in different locations
+    # Run e2e integration tests
     if [ -f "./scripts/manual-e2e-test.sh" ]; then
-      run_step "TypeScript Integration Tests" "VERBOSE=$VERBOSE ./scripts/manual-e2e-test.sh" 
+      run_step "TypeScript E2E Integration Tests" "VERBOSE=$VERBOSE ./scripts/manual-e2e-test.sh" 
     elif [ -f "/workspace/scripts/manual-e2e-test.sh" ]; then
-      run_step "TypeScript Integration Tests" "VERBOSE=$VERBOSE /workspace/scripts/manual-e2e-test.sh" 
+      run_step "TypeScript E2E Integration Tests" "VERBOSE=$VERBOSE /workspace/scripts/manual-e2e-test.sh" 
     else
       echo -e "${RED}❌ Could not find manual-e2e-test.sh script in any expected location${NC}"
       echo -e "Current directory: $(pwd)"
@@ -184,6 +186,15 @@ run_test_workflow() {
       ls -la ./scripts/ 2>/dev/null || echo "Directory not found"
       echo -e "Contents of /workspace/scripts/:"
       ls -la /workspace/scripts/ 2>/dev/null || echo "Directory not found"
+    fi
+    
+    # Run gateway synchronization tests
+    if [ -f "./scripts/sync-test.sh" ]; then
+      run_step "Gateway Synchronization Tests" "VERBOSE=$VERBOSE ./scripts/sync-test.sh" 
+    elif [ -f "/workspace/scripts/sync-test.sh" ]; then
+      run_step "Gateway Synchronization Tests" "VERBOSE=$VERBOSE /workspace/scripts/sync-test.sh" 
+    else
+      echo -e "${YELLOW}⚠️ Could not find sync-test.sh script in any expected location - skipping sync tests${NC}"
     fi
   else
     echo -e "${YELLOW}⚠️ Skipping integration tests - use --integration to enable them${NC}"
@@ -210,15 +221,17 @@ run_nightly_workflow() {
   
   # Run integration tests if enabled
   if [[ "$SKIP_INTEGRATION_TESTS" != "true" ]]; then
-    # First try to ensure the script is executable wherever it might be
+    # First try to ensure the scripts are executable wherever they might be
     chmod +x ./scripts/manual-e2e-test.sh 2>/dev/null || true
     chmod +x /workspace/scripts/manual-e2e-test.sh 2>/dev/null || true
+    chmod +x ./scripts/sync-test.sh 2>/dev/null || true
+    chmod +x /workspace/scripts/sync-test.sh 2>/dev/null || true
     
-    # Try to find the script in different locations
+    # Run e2e integration tests
     if [ -f "./scripts/manual-e2e-test.sh" ]; then
-      run_step "TypeScript Integration Tests" "VERBOSE=$VERBOSE ./scripts/manual-e2e-test.sh" 
+      run_step "TypeScript E2E Integration Tests" "VERBOSE=$VERBOSE ./scripts/manual-e2e-test.sh" 
     elif [ -f "/workspace/scripts/manual-e2e-test.sh" ]; then
-      run_step "TypeScript Integration Tests" "VERBOSE=$VERBOSE /workspace/scripts/manual-e2e-test.sh" 
+      run_step "TypeScript E2E Integration Tests" "VERBOSE=$VERBOSE /workspace/scripts/manual-e2e-test.sh" 
     else
       echo -e "${RED}❌ Could not find manual-e2e-test.sh script in any expected location${NC}"
       echo -e "Current directory: $(pwd)"
@@ -226,6 +239,15 @@ run_nightly_workflow() {
       ls -la ./scripts/ 2>/dev/null || echo "Directory not found"
       echo -e "Contents of /workspace/scripts/:"
       ls -la /workspace/scripts/ 2>/dev/null || echo "Directory not found"
+    fi
+    
+    # Run gateway synchronization tests
+    if [ -f "./scripts/sync-test.sh" ]; then
+      run_step "Gateway Synchronization Tests" "VERBOSE=$VERBOSE ./scripts/sync-test.sh" 
+    elif [ -f "/workspace/scripts/sync-test.sh" ]; then
+      run_step "Gateway Synchronization Tests" "VERBOSE=$VERBOSE /workspace/scripts/sync-test.sh" 
+    else
+      echo -e "${YELLOW}⚠️ Could not find sync-test.sh script in any expected location - skipping sync tests${NC}"
     fi
   else
     echo -e "${YELLOW}⚠️ Skipping integration tests - use --integration to enable them${NC}"
