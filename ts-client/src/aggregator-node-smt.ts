@@ -452,6 +452,70 @@ export class SMTAggregatorNodeClient extends AggregatorNodeClient {
   }
 
   /**
+   * Synchronize with on-chain state by processing all batches that have been 
+   * processed on-chain but not by this instance
+   * 
+   * Enhanced version with SMT-specific logging
+   */
+  protected async syncWithOnChainState(): Promise<void> {
+    try {
+      console.log('[SMT-Sync] Starting synchronization with on-chain state');
+      const startTime = Date.now();
+      
+      // Get the latest batch numbers
+      const latestBatchNumber = await this.getLatestBatchNumber();
+      const latestProcessedBatchNumber = await this.getLatestProcessedBatchNumber();
+      
+      if (latestBatchNumber === 0n) {
+        console.log('[SMT-Sync] No batches found on-chain, nothing to synchronize');
+        return;
+      }
+      
+      console.log(`[SMT-Sync] Found ${latestBatchNumber} batches on-chain, ${latestProcessedBatchNumber} processed`);
+      
+      // Process all batches from 1 to latestProcessedBatchNumber
+      // These are already processed on-chain, but we need to calculate hashroots locally
+      // to maintain consistency
+      let syncedBatchCount = 0;
+      let successCount = 0;
+      
+      for (let i = 1n; i <= latestProcessedBatchNumber; i++) {
+        // Skip if already processed by this instance
+        if (this.processedBatches.has(i.toString())) {
+          continue;
+        }
+        
+        try {
+          console.log(`[SMT-Sync] Verifying already processed batch ${i}`);
+          const batch = await this.getBatch(i);
+          
+          if (!batch.processed || !batch.hashroot) {
+            console.warn(`[SMT-Sync] Batch ${i} is marked as processed on-chain but has no hashroot, skipping`);
+            continue;
+          }
+          
+          // Use the verifyProcessedBatch method to verify this batch
+          const result = await this.verifyProcessedBatch(i, batch);
+          syncedBatchCount++;
+          
+          if (result.success) {
+            successCount++;
+          }
+        } catch (error) {
+          console.error(`[SMT-Sync] Error processing batch ${i}:`, error);
+          // Continue with next batch
+        }
+      }
+      
+      const elapsedTime = Date.now() - startTime;
+      console.log(`[SMT-Sync] Synchronized ${syncedBatchCount} batches (${successCount} successful) in ${elapsedTime}ms`);
+    } catch (error) {
+      console.error('[SMT-Sync] Error synchronizing with on-chain state:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Process all unprocessed batches up to the latest batch
    * Overrides the base class implementation to add SMT-specific logging
    * 

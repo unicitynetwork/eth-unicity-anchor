@@ -106,6 +106,11 @@ export interface TransactionResult {
    * Indicates this was a skipped operation because it was previously processed
    */
   skipped?: boolean;
+  
+  /**
+   * Indicates this batch was verified against an on-chain processed batch
+   */
+  verified?: boolean;
 }
 
 /**

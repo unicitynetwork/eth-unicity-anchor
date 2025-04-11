@@ -43,12 +43,189 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
 
     // Will initialize the Merkle Tree when processing batches
 
-    // Start automatic batch processing if enabled
+    // If batch processing is enabled, catch up with the on-chain state
     if (autoProcessingEnabled) {
-      this.startAutoBatchProcessing();
+      // Run this in the background to avoid blocking constructor
+      setTimeout(() => {
+        this.syncWithOnChainState().then(() => {
+          // Start automatic batch processing after sync
+          this.startAutoBatchProcessing();
+        }).catch(error => {
+          console.error('Error syncing with on-chain state:', error);
+          // Still start batch processing even if sync fails
+          this.startAutoBatchProcessing();
+        });
+      }, 0);
     }
   }
 
+  /**
+   * Synchronize with on-chain state by processing all batches that have been 
+   * processed on-chain but not by this instance
+   * 
+   * This ensures the gateway is in sync with the blockchain state even after
+   * a restart, and that the SMT state is consistent with what's on-chain.
+   */
+  protected async syncWithOnChainState(): Promise<void> {
+    try {
+      console.log('[Sync] Starting synchronization with on-chain state');
+      const startTime = Date.now();
+      
+      // Get the latest batch numbers
+      const latestBatchNumber = await this.getLatestBatchNumber();
+      const latestProcessedBatchNumber = await this.getLatestProcessedBatchNumber();
+      
+      if (latestBatchNumber === 0n) {
+        console.log('[Sync] No batches found on-chain, nothing to synchronize');
+        return;
+      }
+      
+      console.log(`[Sync] Found ${latestBatchNumber} batches on-chain, ${latestProcessedBatchNumber} processed`);
+      
+      // Process all batches from 1 to latestProcessedBatchNumber
+      // These are already processed on-chain, but we need to calculate hashroots locally
+      // to maintain consistency
+      let syncedBatchCount = 0;
+      
+      for (let i = 1n; i <= latestProcessedBatchNumber; i++) {
+        // Skip if already processed by this instance
+        if (this.processedBatches.has(i.toString())) {
+          continue;
+        }
+        
+        try {
+          console.log(`[Sync] Processing already processed batch ${i} to verify hashroot`);
+          const batch = await this.getBatch(i);
+          
+          if (!batch.processed || !batch.hashroot) {
+            console.warn(`[Sync] Batch ${i} is marked as processed on-chain but has no hashroot, skipping`);
+            continue;
+          }
+          
+          // Calculate the hashroot locally
+          const localHashroot = await this.calculateHashroot(batch.requests);
+          
+          // Compare with on-chain hashroot
+          const onChainHashroot = batch.hashroot;
+          
+          if (ethers.hexlify(localHashroot) === onChainHashroot) {
+            console.log(`[Sync] Batch ${i} hashroot verified successfully`);
+            // Add to processed batches since we've verified it
+            this.processedBatches.add(i.toString());
+            syncedBatchCount++;
+          } else {
+            console.warn(`[Sync] Batch ${i} hashroot mismatch:
+              Local:    ${ethers.hexlify(localHashroot)}
+              On-chain: ${onChainHashroot}`);
+            // Still mark as processed to avoid attempting to reprocess it
+            this.processedBatches.add(i.toString());
+          }
+        } catch (error) {
+          console.error(`[Sync] Error processing batch ${i}:`, error);
+          // Continue with next batch
+        }
+      }
+      
+      const elapsedTime = Date.now() - startTime;
+      console.log(`[Sync] Synchronized ${syncedBatchCount} batches in ${elapsedTime}ms`);
+    } catch (error) {
+      console.error('[Sync] Error synchronizing with on-chain state:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Verify a batch that has already been processed on-chain
+   * Compares our calculated hashroot with what's recorded on-chain
+   */
+  protected async verifyProcessedBatch(
+    batchNumber: bigint,
+    batchInfo: { processed: boolean; hashroot?: string; requests: BatchRequest[] }
+  ): Promise<TransactionResult> {
+    const batchKey = batchNumber.toString();
+    
+    // If already processed locally, no need to verify again
+    if (this.processedBatches.has(batchKey)) {
+      return {
+        success: false,
+        error: new Error(`Batch ${batchNumber} is already processed`),
+      };
+    }
+    
+    // If no hashroot, we can't verify
+    if (!batchInfo.hashroot) {
+      console.warn(`Batch ${batchNumber} is marked as processed but has no hashroot`);
+      this.processedBatches.add(batchKey);
+      return {
+        success: false,
+        error: new Error(`Batch ${batchNumber} has no hashroot to verify`),
+      };
+    }
+    
+    // Calculate the hashroot locally and compare
+    try {
+      const localHashroot = await this.calculateHashroot(batchInfo.requests);
+      const localHashrootHex = ethers.hexlify(localHashroot);
+      
+      if (localHashrootHex === batchInfo.hashroot) {
+        console.log(`Hashroot verification successful for batch ${batchNumber}`);
+        this.processedBatches.add(batchKey);
+        return {
+          success: true,
+          message: `Batch ${batchNumber} hashroot verified successfully`,
+          verified: true
+        };
+      } else {
+        console.warn(`Hashroot mismatch for batch ${batchNumber}:
+          Local:    ${localHashrootHex}
+          On-chain: ${batchInfo.hashroot}`);
+        
+        // Still mark as processed to avoid redundant checks
+        this.processedBatches.add(batchKey);
+        return {
+          success: false,
+          error: new Error(`Batch ${batchNumber} hashroot mismatch`),
+          message: 'Hashroot mismatch between local calculation and on-chain value'
+        };
+      }
+    } catch (error) {
+      console.error(`Error verifying batch ${batchNumber}:`, error);
+      // Still mark as processed to avoid endless retries
+      this.processedBatches.add(batchKey);
+      return {
+        success: false,
+        error: error instanceof Error ? error : new Error(String(error)),
+        message: `Error verifying batch ${batchNumber}`
+      };
+    }
+  }
+
+  /**
+   * Calculate hashroot for a set of requests
+   * Used for validation during sync
+   */
+  protected async calculateHashroot(requests: BatchRequest[]): Promise<Uint8Array> {
+    // Create leaf nodes for the Merkle Tree
+    const leaves: [string, string][] = [];
+    
+    // Add all commitments as leaves
+    for (const request of requests) {
+      const key = request.requestID;
+      const value = bytesToHex(
+        ethers.concat([hexToBytes(request.payload), hexToBytes(request.authenticator)]),
+      );
+      
+      leaves.push([key, value]);
+    }
+    
+    // Create the Merkle Tree
+    this.smt = StandardMerkleTree.of(leaves, ['string', 'string']);
+    
+    // Get the SMT root
+    const root = this.smt.root;
+    return hexToBytes(root);
+  }
+  
   /**
    * Submit a hashroot for a batch
    * @param batchNumber The batch number
@@ -74,17 +251,25 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
     try {
       const bn = typeof batchNumber === 'string' ? BigInt(batchNumber) : batchNumber;
 
-      // First, check if this batch is already processed
-      const latestProcessed = await this.getLatestProcessedBatchNumber();
-      if (bn <= latestProcessed) {
+      // First check if this batch has already been processed by this instance
+      if (this.processedBatches.has(bn.toString())) {
         return {
           success: false,
-          error: new Error(`Batch ${bn} is already processed`),
+          error: new Error(`Batch ${bn} is already processed by this instance`),
+          skipped: true
         };
       }
-
-      // Next, check if this is the next batch to be processed
-      if (bn !== latestProcessed + BigInt(1)) {
+      
+      // Check if the batch is already processed on-chain
+      const batchInfo = await this.getBatch(bn);
+      if (batchInfo.processed) {
+        console.log(`Batch ${bn} is already processed on-chain. Verifying locally...`);
+        return this.verifyProcessedBatch(bn, batchInfo);
+      }
+      
+      // Check if we can process this batch (must be the next one after the latest processed)
+      const latestProcessed = await this.getLatestProcessedBatchNumber();
+      if (bn > latestProcessed + BigInt(1)) {
         return {
           success: false,
           error: new Error(
@@ -93,15 +278,8 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
         };
       }
 
-      // Get the batch data
-      const { requests, processed } = await this.getBatch(bn);
-
-      if (processed) {
-        return {
-          success: false,
-          error: new Error(`Batch ${bn} is already processed`),
-        };
-      }
+      // We already got the batch info above, but let's make sure we have the correct variables
+      const { requests } = batchInfo;
 
       // Create leaf nodes for the Merkle Tree
       const leaves: [string, string][] = [];
