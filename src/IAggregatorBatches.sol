@@ -95,8 +95,9 @@ interface IAggregatorBatches {
      * Auto-numbered batches will always use the first available gap, filling in gaps in the sequence.
      * Regardless of batch numbering, batch processing must still occur in strict sequential order.
      */
-    function createBatchForRequestsWithNumber(uint256[] calldata requestIDs, uint256 explicitBatchNumber) 
-        external returns (uint256 batchNumber);
+    function createBatchForRequestsWithNumber(uint256[] calldata requestIDs, uint256 explicitBatchNumber)
+        external
+        returns (uint256 batchNumber);
 
     /**
      * @dev Submit multiple commitments and create a batch containing them in a single transaction
@@ -111,7 +112,7 @@ interface IAggregatorBatches {
     function submitAndCreateBatch(CommitmentRequest[] calldata commitmentRequests)
         external
         returns (uint256 batchNumber, uint256 successCount);
-        
+
     /**
      * @dev Submit multiple commitments and create a batch containing them with an explicit batch number
      * @param commitmentRequests Array of commitment requests to submit
@@ -128,9 +129,10 @@ interface IAggregatorBatches {
      * Auto-numbered batches will always use the first available gap, filling in gaps in the sequence.
      * Regardless of batch numbering, batch processing must still occur in strict sequential order.
      */
-    function submitAndCreateBatchWithNumber(CommitmentRequest[] calldata commitmentRequests, uint256 explicitBatchNumber)
-        external
-        returns (uint256 batchNumber, uint256 successCount);
+    function submitAndCreateBatchWithNumber(
+        CommitmentRequest[] calldata commitmentRequests,
+        uint256 explicitBatchNumber
+    ) external returns (uint256 batchNumber, uint256 successCount);
 
     /**
      * @dev Returns the latest unprocessed batch
@@ -165,7 +167,7 @@ interface IAggregatorBatches {
      * @return batchNumber The number of the latest batch
      */
     function getLatestBatchNumber() external view returns (uint256 batchNumber);
-    
+
     /**
      * @dev Returns the next available batch number for auto-numbering (first available gap)
      * @return batchNumber The next available batch number

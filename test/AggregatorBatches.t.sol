@@ -721,7 +721,7 @@ contract AggregatorBatchesTest is Test {
         uint256 votes = aggregator.getHashrootVoteCount(batchNumber, hashroot);
         assertEq(votes, 1, "Vote count should still be 1");
     }
-    
+
     /**
      * @dev Test that batches must be processed in the correct sequence
      * This test verifies:
@@ -732,25 +732,27 @@ contract AggregatorBatchesTest is Test {
     function testSequentialBatchProcessingWithGaps() public {
         // Set up batches with gaps
         vm.startPrank(trustedAggregators[0]);
-        
+
         // Create several commitments
         for (uint256 i = 1; i <= 10; i++) {
-            aggregator.submitCommitment(900 + i, bytes(abi.encodePacked("test-payload-", i)), bytes(abi.encodePacked("test-auth-", i)));
+            aggregator.submitCommitment(
+                900 + i, bytes(abi.encodePacked("test-payload-", i)), bytes(abi.encodePacked("test-auth-", i))
+            );
         }
-        
+
         // Create batch 1
         uint256[] memory batch1Ids = new uint256[](2);
         batch1Ids[0] = 901;
         batch1Ids[1] = 902;
         uint256 batch1Number = aggregator.createBatchForRequests(batch1Ids);
-        
+
         // Create batch 5 (with explicit number - creates a gap)
         uint256[] memory batch5Ids = new uint256[](2);
         batch5Ids[0] = 905;
         batch5Ids[1] = 906;
         uint256 batch5Number = 5;
         aggregator.createBatchForRequestsWithNumber(batch5Ids, batch5Number);
-        
+
         // Create batch 10 (with explicit number - creates another gap)
         uint256[] memory batch10Ids = new uint256[](2);
         batch10Ids[0] = 909;
@@ -758,162 +760,162 @@ contract AggregatorBatchesTest is Test {
         uint256 batch10Number = 10;
         aggregator.createBatchForRequestsWithNumber(batch10Ids, batch10Number);
         vm.stopPrank();
-        
+
         // TEST CASE 1: Try to process batch 5 before batch 1
         vm.prank(trustedAggregators[0]);
         vm.expectRevert("Batches must be processed in sequence; can't skip batches");
         aggregator.submitHashroot(batch5Number, bytes("test-hashroot"));
-        
+
         // TEST CASE 2: Try to process batch 10 before batches 1 and 5
         vm.prank(trustedAggregators[0]);
         vm.expectRevert("Batches must be processed in sequence; can't skip batches");
         aggregator.submitHashroot(batch10Number, bytes("test-hashroot"));
-        
+
         // TEST CASE 3: Try to process a non-existent batch (batch 2)
         vm.prank(trustedAggregators[0]);
         vm.expectRevert("Batch does not exist");
         aggregator.submitHashroot(2, bytes("test-hashroot"));
-        
+
         // TEST CASE 3b: Try to process a batch number larger than any existing batch
         vm.prank(trustedAggregators[0]);
         vm.expectRevert("Invalid batch number");
         aggregator.submitHashroot(999, bytes("test-hashroot"));
-        
+
         // TEST CASE 4: Process batch 1 correctly
         vm.startPrank(trustedAggregators[0]);
         aggregator.submitHashroot(batch1Number, bytes("test-hashroot"));
         vm.stopPrank();
-        
+
         vm.prank(trustedAggregators[1]);
         aggregator.submitHashroot(batch1Number, bytes("test-hashroot"));
-        
+
         // Verify batch 1 is processed
         (, bool batch1Processed,) = aggregator.getBatch(batch1Number);
         assertTrue(batch1Processed, "Batch 1 should be processed");
         assertEq(aggregator.getLatestProcessedBatchNumber(), batch1Number, "Latest processed batch number should be 1");
-        
+
         // TEST CASE 5: Try to process batch 10 before batch 5 (should still fail)
         vm.prank(trustedAggregators[0]);
         vm.expectRevert("Batches must be processed in sequence; can't skip batches");
         aggregator.submitHashroot(batch10Number, bytes("test-hashroot"));
-        
+
         // TEST CASE 6: Create a batch between 1 and 5 (batch 3)
         vm.prank(trustedAggregators[0]);
         aggregator.submitCommitment(903, bytes("test-payload-3"), bytes("test-auth-3"));
-        
+
         uint256[] memory batch3Ids = new uint256[](1);
         batch3Ids[0] = 903;
         uint256 batch3Number = 3;
-        
+
         vm.prank(trustedAggregators[0]);
         aggregator.createBatchForRequestsWithNumber(batch3Ids, batch3Number);
-        
+
         // Verify we can't skip to batch 5 now that batch 3 exists
         vm.prank(trustedAggregators[0]);
         vm.expectRevert("Batches must be processed in sequence; can't skip batches");
         aggregator.submitHashroot(batch5Number, bytes("test-hashroot"));
-        
+
         // TEST CASE 7: Attempt to process batch 3 (should fail because batch 2 doesn't exist)
         vm.startPrank(trustedAggregators[0]);
         vm.expectRevert("Batches must be processed in sequence; can't skip batches");
         aggregator.submitHashroot(batch3Number, bytes("test-hashroot"));
         vm.stopPrank();
-        
+
         // TEST CASE 8: Create and process batch 2 first (filling the gap)
         uint256[] memory batch2Ids = new uint256[](1);
-        batch2Ids[0] = 904;  // Use another request for batch 2
+        batch2Ids[0] = 904; // Use another request for batch 2
         uint256 batch2Number = 2;
-        
+
         vm.prank(trustedAggregators[0]);
         aggregator.createBatchForRequestsWithNumber(batch2Ids, batch2Number);
-        
+
         // Process batch 2
         vm.startPrank(trustedAggregators[0]);
         aggregator.submitHashroot(batch2Number, bytes("test-hashroot"));
         vm.stopPrank();
-        
+
         vm.prank(trustedAggregators[1]);
         aggregator.submitHashroot(batch2Number, bytes("test-hashroot"));
-        
+
         // Verify batch 2 is processed
         (, bool batch2Processed,) = aggregator.getBatch(batch2Number);
         assertTrue(batch2Processed, "Batch 2 should be processed");
         assertEq(aggregator.getLatestProcessedBatchNumber(), batch2Number, "Latest processed batch number should be 2");
-        
+
         // Now process batch 3 (should succeed now that batch 2 is processed)
         vm.startPrank(trustedAggregators[0]);
         aggregator.submitHashroot(batch3Number, bytes("test-hashroot"));
         vm.stopPrank();
-        
+
         vm.prank(trustedAggregators[1]);
         aggregator.submitHashroot(batch3Number, bytes("test-hashroot"));
-        
+
         // Verify batch 3 is processed
         (, bool batch3Processed,) = aggregator.getBatch(batch3Number);
         assertTrue(batch3Processed, "Batch 3 should be processed");
         assertEq(aggregator.getLatestProcessedBatchNumber(), batch3Number, "Latest processed batch number should be 3");
-        
+
         // TEST CASE 9: Try to skip to batch 5 (should still fail because batch 4 is missing)
         vm.prank(trustedAggregators[0]);
         vm.expectRevert("Batches must be processed in sequence; can't skip batches");
         aggregator.submitHashroot(batch5Number, bytes("test-hashroot"));
-        
+
         // Create and process batch 4
         uint256[] memory batch4Ids = new uint256[](1);
-        batch4Ids[0] = 907;  // Use another available request ID
+        batch4Ids[0] = 907; // Use another available request ID
         uint256 batch4Number = 4;
-        
+
         vm.prank(trustedAggregators[0]);
         aggregator.createBatchForRequestsWithNumber(batch4Ids, batch4Number);
-        
+
         // Process batch 4
         vm.startPrank(trustedAggregators[0]);
         aggregator.submitHashroot(batch4Number, bytes("test-hashroot"));
         vm.stopPrank();
-        
+
         vm.prank(trustedAggregators[1]);
         aggregator.submitHashroot(batch4Number, bytes("test-hashroot"));
-        
+
         // TEST CASE 10: Now we can process batch 5
         vm.startPrank(trustedAggregators[0]);
         aggregator.submitHashroot(batch5Number, bytes("test-hashroot"));
         vm.stopPrank();
-        
+
         vm.prank(trustedAggregators[1]);
         aggregator.submitHashroot(batch5Number, bytes("test-hashroot"));
-        
+
         // Verify batch 5 is processed
         (, bool batch5Processed,) = aggregator.getBatch(batch5Number);
         assertTrue(batch5Processed, "Batch 5 should be processed");
         assertEq(aggregator.getLatestProcessedBatchNumber(), batch5Number, "Latest processed batch number should be 5");
-        
+
         // Try to process batch 10 before processing batches 6 through 9 - should fail
         vm.startPrank(trustedAggregators[0]);
         vm.expectRevert("Batches must be processed in sequence; can't skip batches");
         aggregator.submitHashroot(batch10Number, bytes("test-hashroot"));
         vm.stopPrank();
-        
+
         // Try to create batch 7 with the same request ID as batch 6 - should fail
         uint256[] memory sameRequestIds = new uint256[](1);
         sameRequestIds[0] = 908;
-        
+
         // Create batch 6 first
         vm.prank(trustedAggregators[0]);
         aggregator.createBatchForRequestsWithNumber(sameRequestIds, 6);
-        
+
         // Process batch 6
         vm.startPrank(trustedAggregators[0]);
         aggregator.submitHashroot(6, bytes("test-hashroot"));
         vm.stopPrank();
-        
+
         vm.prank(trustedAggregators[1]);
         aggregator.submitHashroot(6, bytes("test-hashroot"));
-        
+
         // Try to reuse the same ID for batch 7 - should revert
         vm.prank(trustedAggregators[0]);
         vm.expectRevert("No valid unprocessed request IDs provided");
         aggregator.createBatchForRequestsWithNumber(sameRequestIds, 7);
-        
+
         // Create remaining batches with new request IDs
         // Create batch 7
         vm.prank(trustedAggregators[0]);
@@ -922,14 +924,14 @@ contract AggregatorBatchesTest is Test {
         batch7Ids[0] = 1007;
         vm.prank(trustedAggregators[0]);
         aggregator.createBatchForRequestsWithNumber(batch7Ids, 7);
-        
+
         // Process batch 7
         vm.startPrank(trustedAggregators[0]);
         aggregator.submitHashroot(7, bytes("test-hashroot"));
         vm.stopPrank();
         vm.prank(trustedAggregators[1]);
         aggregator.submitHashroot(7, bytes("test-hashroot"));
-        
+
         // Create batch 8
         vm.prank(trustedAggregators[0]);
         aggregator.submitCommitment(1008, bytes("batch-8"), bytes("auth-8"));
@@ -937,14 +939,14 @@ contract AggregatorBatchesTest is Test {
         batch8Ids[0] = 1008;
         vm.prank(trustedAggregators[0]);
         aggregator.createBatchForRequestsWithNumber(batch8Ids, 8);
-        
+
         // Process batch 8
         vm.startPrank(trustedAggregators[0]);
         aggregator.submitHashroot(8, bytes("test-hashroot"));
         vm.stopPrank();
         vm.prank(trustedAggregators[1]);
         aggregator.submitHashroot(8, bytes("test-hashroot"));
-        
+
         // Create batch 9
         vm.prank(trustedAggregators[0]);
         aggregator.submitCommitment(1009, bytes("batch-9"), bytes("auth-9"));
@@ -952,28 +954,30 @@ contract AggregatorBatchesTest is Test {
         batch9Ids[0] = 1009;
         vm.prank(trustedAggregators[0]);
         aggregator.createBatchForRequestsWithNumber(batch9Ids, 9);
-        
+
         // Process batch 9
         vm.startPrank(trustedAggregators[0]);
         aggregator.submitHashroot(9, bytes("test-hashroot"));
         vm.stopPrank();
         vm.prank(trustedAggregators[1]);
         aggregator.submitHashroot(9, bytes("test-hashroot"));
-        
+
         // TEST CASE 9: Now we can finally process batch 10
         vm.startPrank(trustedAggregators[0]);
         aggregator.submitHashroot(batch10Number, bytes("test-hashroot"));
         vm.stopPrank();
-        
+
         vm.prank(trustedAggregators[1]);
         aggregator.submitHashroot(batch10Number, bytes("test-hashroot"));
-        
+
         // Verify batch 10 is processed
         (, bool batch10Processed,) = aggregator.getBatch(batch10Number);
         assertTrue(batch10Processed, "Batch 10 should be processed");
-        assertEq(aggregator.getLatestProcessedBatchNumber(), batch10Number, "Latest processed batch number should be 10");
+        assertEq(
+            aggregator.getLatestProcessedBatchNumber(), batch10Number, "Latest processed batch number should be 10"
+        );
     }
-    
+
     /**
      * @dev Test that methods with implicit batch numbering fill gaps
      * This test verifies that when using methods that auto-assign batch numbers
@@ -988,95 +992,106 @@ contract AggregatorBatchesTest is Test {
     function testImplicitBatchNumberingFillsGaps() public {
         // Setup some initial data
         vm.startPrank(trustedAggregators[0]);
-        
+
         // Create several commitments
         for (uint256 i = 1; i <= 15; i++) {
-            aggregator.submitCommitment(100 + i, bytes(abi.encodePacked("payload-", i)), bytes(abi.encodePacked("auth-", i)));
+            aggregator.submitCommitment(
+                100 + i, bytes(abi.encodePacked("payload-", i)), bytes(abi.encodePacked("auth-", i))
+            );
         }
-        
+
         // First, verify that the next auto-numbered batch is 1
         assertEq(aggregator.getNextAutoNumberedBatch(), 1, "Initial auto-numbered batch should be 1");
-        
+
         // Create batch 1 (auto-assigned number)
         uint256[] memory batch1Ids = new uint256[](1);
         batch1Ids[0] = 101;
         uint256 batch1 = aggregator.createBatchForRequests(batch1Ids);
         assertEq(batch1, 1, "First batch should be number 1");
-        
+
         // The next auto-numbered batch should now be 2
         assertEq(aggregator.getNextAutoNumberedBatch(), 2, "Next auto-numbered batch should be 2");
-        
+
         // Now create batch 3 (skipping 2) with explicit numbering
         uint256[] memory batch3Ids = new uint256[](1);
         batch3Ids[0] = 111;
         uint256 batch3Number = 3;
         aggregator.createBatchForRequestsWithNumber(batch3Ids, batch3Number);
-        
+
         // Check that firstGapIndex is still correctly pointing to gap 2
-        assertEq(aggregator.getNextAutoNumberedBatch(), 2, "Next auto-numbered batch should still be 2 (gap not filled)");
-        
+        assertEq(
+            aggregator.getNextAutoNumberedBatch(), 2, "Next auto-numbered batch should still be 2 (gap not filled)"
+        );
+
         // Create batch 5 with explicit numbering (creating a gap)
         uint256[] memory batch5Ids = new uint256[](1);
         batch5Ids[0] = 102;
         uint256 batch5 = 5;
         aggregator.createBatchForRequestsWithNumber(batch5Ids, batch5);
-        
+
         // Verify both tracking variables
         assertEq(aggregator.getLatestBatchNumber(), 5, "Highest batch number should be 5");
         assertEq(aggregator.getNextAutoNumberedBatch(), 2, "Next auto-numbered batch should still be 2");
-        
+
         // Now create a batch with auto-numbering - should be batch 2 (filling the gap)
         uint256[] memory batch2Ids = new uint256[](1);
         batch2Ids[0] = 103;
         uint256 batch2 = aggregator.createBatchForRequests(batch2Ids);
         assertEq(batch2, 2, "Auto-numbered batch should fill gap with number 2");
-        
+
         // The next auto-numbered batch should be 4 (since batch 3 already exists)
-        assertEq(aggregator.getNextAutoNumberedBatch(), 4, "Next auto-numbered batch should be 4 (since batch 3 exists)");
-        
+        assertEq(
+            aggregator.getNextAutoNumberedBatch(), 4, "Next auto-numbered batch should be 4 (since batch 3 exists)"
+        );
+
         // Create another auto-numbered batch - should be batch 4
         uint256[] memory autoNumBatch4Ids = new uint256[](1);
         autoNumBatch4Ids[0] = 104;
         uint256 batch4 = aggregator.createBatchForRequests(autoNumBatch4Ids);
         assertEq(batch4, 4, "Auto-numbered batch should be 4");
-        
+
         // Create batch 10 with explicit numbering (creating another gap)
         uint256[] memory batch10Ids = new uint256[](1);
         batch10Ids[0] = 105;
         uint256 batch10 = 10;
         aggregator.createBatchForRequestsWithNumber(batch10Ids, batch10);
-        
+
         // Verify tracking variables
         assertEq(aggregator.getLatestBatchNumber(), 10, "Highest batch number should be 10");
         assertEq(aggregator.getNextAutoNumberedBatch(), 6, "Next auto-numbered batch should be 6 (gaps at 6,7,8,9)");
-        
+
         // Create more commitments for the remaining batches
         for (uint256 i = 0; i < 10; i++) {
-            aggregator.submitCommitment(200 + i, bytes(abi.encodePacked("new-payload-", i)), bytes(abi.encodePacked("new-auth-", i)));
+            aggregator.submitCommitment(
+                200 + i, bytes(abi.encodePacked("new-payload-", i)), bytes(abi.encodePacked("new-auth-", i))
+            );
         }
-        
+
         // Fill the remaining gaps (6,7,8,9) with auto-numbered batches
         for (uint256 i = 6; i <= 9; i++) {
             uint256[] memory ids = new uint256[](1);
-            ids[0] = 200 + (i-6); // Use the new request IDs
+            ids[0] = 200 + (i - 6); // Use the new request IDs
             uint256 batchNum = aggregator.createBatchForRequests(ids);
             assertEq(batchNum, i, string(abi.encodePacked("Auto-numbered batch should be ", i)));
-            
+
             // Next gap should be i+1, unless it's 10 which already exists
-            uint256 expectedNextGap = (i == 9) ? 11 : i+1;
-            assertEq(aggregator.getNextAutoNumberedBatch(), expectedNextGap, 
-                string(abi.encodePacked("Next auto-numbered batch should be ", expectedNextGap)));
+            uint256 expectedNextGap = (i == 9) ? 11 : i + 1;
+            assertEq(
+                aggregator.getNextAutoNumberedBatch(),
+                expectedNextGap,
+                string(abi.encodePacked("Next auto-numbered batch should be ", expectedNextGap))
+            );
         }
-        
+
         // Create one more batch - should be 11 (after all gaps are filled)
         uint256[] memory batch11Ids = new uint256[](1);
         batch11Ids[0] = 209; // Use the last new request ID
         uint256 batch11 = aggregator.createBatchForRequests(batch11Ids);
         assertEq(batch11, 11, "Next auto-numbered batch after all gaps filled should be 11");
-        
+
         vm.stopPrank();
     }
-    
+
     /**
      * @dev Test all three auto-numbering batch creation methods fill gaps correctly
      * This tests each of the auto-numbering methods:
@@ -1086,54 +1101,58 @@ contract AggregatorBatchesTest is Test {
      */
     function testAllAutoNumberingMethodsFillGaps() public {
         vm.startPrank(trustedAggregators[0]);
-        
+
         // Verify initial state
         assertEq(aggregator.getNextAutoNumberedBatch(), 1, "Initial auto-numbered batch should be 1");
         assertEq(aggregator.getLatestBatchNumber(), 0, "No batches yet, latest should be 0");
-        
+
         // Create batches with explicit numbering to create gaps
-        
+
         // Group 1: For explicit batch 2, 4, 7, 9
         for (uint256 i = 1; i <= 4; i++) {
-            aggregator.submitCommitment(1000 + i, bytes(abi.encodePacked("group1-payload-", i)), bytes(abi.encodePacked("group1-auth-", i)));
+            aggregator.submitCommitment(
+                1000 + i, bytes(abi.encodePacked("group1-payload-", i)), bytes(abi.encodePacked("group1-auth-", i))
+            );
         }
-        
+
         // Create batch 2
         uint256[] memory batch2Ids = new uint256[](1);
         batch2Ids[0] = 1001;
         aggregator.createBatchForRequestsWithNumber(batch2Ids, 2);
-        
+
         // Create batch 4
         uint256[] memory batch4Ids = new uint256[](1);
         batch4Ids[0] = 1002;
         aggregator.createBatchForRequestsWithNumber(batch4Ids, 4);
-        
+
         // Create batch 7
         uint256[] memory batch7Ids = new uint256[](1);
         batch7Ids[0] = 1003;
         aggregator.createBatchForRequestsWithNumber(batch7Ids, 7);
-        
+
         // Create batch 9
         uint256[] memory batch9Ids = new uint256[](1);
         batch9Ids[0] = 1004;
         aggregator.createBatchForRequestsWithNumber(batch9Ids, 9);
-        
+
         // Verify state after creating gaps
         assertEq(aggregator.getNextAutoNumberedBatch(), 1, "First gap should be at position 1");
         assertEq(aggregator.getLatestBatchNumber(), 9, "Latest batch number should be 9");
-        
-        // TEST METHOD 1: createBatch() 
+
+        // TEST METHOD 1: createBatch()
         // This should create batch 1 (filling first gap)
         // Add commitments for the first batch
         for (uint256 i = 1; i <= 3; i++) {
-            aggregator.submitCommitment(1100 + i, bytes(abi.encodePacked("batch1-payload-", i)), bytes(abi.encodePacked("batch1-auth-", i)));
+            aggregator.submitCommitment(
+                1100 + i, bytes(abi.encodePacked("batch1-payload-", i)), bytes(abi.encodePacked("batch1-auth-", i))
+            );
         }
         uint256 autoBatch1 = aggregator.createBatch();
         assertEq(autoBatch1, 1, "createBatch() should fill gap 1");
-        
+
         // Verify next gap is now 3
         assertEq(aggregator.getNextAutoNumberedBatch(), 3, "Next gap should be 3");
-        
+
         // TEST METHOD 2: createBatchForRequests()
         // This should create batch 3 (filling the next gap)
         // Add a commitment for batch 3
@@ -1142,65 +1161,67 @@ contract AggregatorBatchesTest is Test {
         requestIds[0] = 2001;
         uint256 autoBatch3 = aggregator.createBatchForRequests(requestIds);
         assertEq(autoBatch3, 3, "createBatchForRequests() should fill gap 3");
-        
+
         // Verify next gap is now 5
         assertEq(aggregator.getNextAutoNumberedBatch(), 5, "Next gap should be 5");
-        
+
         // TEST METHOD 3: submitAndCreateBatch()
         // This should create batch 5 (filling the next gap)
         IAggregatorBatches.CommitmentRequest[] memory newRequests = new IAggregatorBatches.CommitmentRequest[](2);
-        
+
         newRequests[0] = IAggregatorBatches.CommitmentRequest({
             requestID: 3001,
             payload: bytes("batch5-payload-1"),
             authenticator: bytes("batch5-auth-1")
         });
-        
+
         newRequests[1] = IAggregatorBatches.CommitmentRequest({
             requestID: 3002,
             payload: bytes("batch5-payload-2"),
             authenticator: bytes("batch5-auth-2")
         });
-        
+
         (uint256 autoBatch5, uint256 successCount) = aggregator.submitAndCreateBatch(newRequests);
         assertEq(autoBatch5, 5, "submitAndCreateBatch() should fill gap 5");
         assertEq(successCount, 2, "Both new commitments should be submitted successfully");
-        
+
         // Verify next gap is now 6
         assertEq(aggregator.getNextAutoNumberedBatch(), 6, "Next gap should be 6");
-        
+
         // Verify the batch contents to ensure they were created correctly
-        
+
         // Check batch 1 (created with createBatch)
         (IAggregatorBatches.CommitmentRequest[] memory batch1Requests,,) = aggregator.getBatch(1);
         assertGt(batch1Requests.length, 0, "Batch 1 should contain commitments");
-        
+
         // Check batch 3 (created with createBatchForRequests)
         (IAggregatorBatches.CommitmentRequest[] memory batch3Requests,,) = aggregator.getBatch(3);
         assertEq(batch3Requests.length, 1, "Batch 3 should contain 1 commitment");
         assertEq(batch3Requests[0].requestID, 2001, "Batch 3 should contain request ID 2001");
-        
+
         // Check batch 5 (created with submitAndCreateBatch)
         (IAggregatorBatches.CommitmentRequest[] memory batch5Requests,,) = aggregator.getBatch(5);
         assertEq(batch5Requests.length, 2, "Batch 5 should contain 2 commitments");
         assertEq(batch5Requests[0].requestID, 3001, "Batch 5 should contain request ID 3001");
         assertEq(batch5Requests[1].requestID, 3002, "Batch 5 should contain request ID 3002");
-        
-        // Create one more gap at 8 
+
+        // Create one more gap at 8
         aggregator.submitCommitment(2003, bytes("batch8-payload"), bytes("batch8-auth"));
         uint256[] memory batch8Ids = new uint256[](1);
         batch8Ids[0] = 2003;
         aggregator.createBatchForRequestsWithNumber(batch8Ids, 8);
-        
+
         // Now test createBatch will fill gap 6
         // Add some commitments for batch 6
         for (uint256 i = 1; i <= 2; i++) {
-            aggregator.submitCommitment(4000 + i, bytes(abi.encodePacked("batch6-payload-", i)), bytes(abi.encodePacked("batch6-auth-", i)));
+            aggregator.submitCommitment(
+                4000 + i, bytes(abi.encodePacked("batch6-payload-", i)), bytes(abi.encodePacked("batch6-auth-", i))
+            );
         }
-        
+
         uint256 autoBatch6 = aggregator.createBatch();
         assertEq(autoBatch6, 6, "createBatch should fill gap 6");
-        
+
         vm.stopPrank();
     }
 
@@ -1308,7 +1329,7 @@ contract AggregatorBatchesTest is Test {
 
         vm.stopPrank();
     }
-    
+
     /**
      * @dev Test creating batches with explicit batch numbers
      * Verifies the behavior when creating batches with non-sequential numbers
@@ -1322,62 +1343,62 @@ contract AggregatorBatchesTest is Test {
         aggregator.submitCommitment(204, bytes("payload 204"), bytes("auth 204"));
         aggregator.submitCommitment(205, bytes("payload 205"), bytes("auth 205"));
         vm.stopPrank();
-        
+
         // Create batch with a high batch number (creates a gap)
         uint256[] memory requestIds = new uint256[](2);
         requestIds[0] = 201;
         requestIds[1] = 202;
-        
+
         uint256 explicitBatchNumber = 10; // Create batch #10
-        
+
         vm.prank(trustedAggregators[0]);
         uint256 createdBatchNumber = aggregator.createBatchForRequestsWithNumber(requestIds, explicitBatchNumber);
-        
+
         // Verify the batch was created with the explicit number
         assertEq(createdBatchNumber, explicitBatchNumber, "Batch should have explicit number");
-        
+
         // Check the latest batch number is updated
         assertEq(aggregator.getLatestBatchNumber(), explicitBatchNumber, "Latest batch number should be updated");
-        
+
         // Verify the batch contents
         (IAggregatorBatches.CommitmentRequest[] memory batch10Requests,,) = aggregator.getBatch(explicitBatchNumber);
         assertEq(batch10Requests.length, 2, "Batch 10 should have 2 requests");
-        
+
         // Create a second batch with a different explicit number (lower than the first one)
         uint256[] memory requestIds2 = new uint256[](2);
         requestIds2[0] = 203;
         requestIds2[1] = 204;
-        
+
         uint256 explicitBatchNumber2 = 5; // Create batch #5
-        
+
         vm.prank(trustedAggregators[0]);
         uint256 createdBatchNumber2 = aggregator.createBatchForRequestsWithNumber(requestIds2, explicitBatchNumber2);
-        
+
         // Verify the second batch
         assertEq(createdBatchNumber2, explicitBatchNumber2, "Second batch should have explicit number");
-        
+
         // Check the latest batch number is still 10 (not changed)
         assertEq(aggregator.getLatestBatchNumber(), explicitBatchNumber, "Latest batch number should still be 10");
-        
+
         // Verify the second batch contents
         (IAggregatorBatches.CommitmentRequest[] memory batch5Requests,,) = aggregator.getBatch(explicitBatchNumber2);
         assertEq(batch5Requests.length, 2, "Batch 5 should have 2 requests");
-        
+
         // Try to create batch with already used batch number (should revert)
         uint256[] memory requestIds3 = new uint256[](1);
         requestIds3[0] = 205;
-        
+
         vm.prank(trustedAggregators[0]);
         vm.expectRevert("Batch number already exists");
         aggregator.createBatchForRequestsWithNumber(requestIds3, explicitBatchNumber);
-        
+
         // Try to create batch with batch number 0 (should revert)
         vm.prank(trustedAggregators[0]);
         vm.expectRevert("Batch number must be greater than 0");
         aggregator.createBatchForRequestsWithNumber(requestIds3, 0);
-        
+
         // First, create batches 1-4 explicitly (batch 5 already exists)
-        
+
         // Create batch 1
         uint256 newReqId1 = 301;
         vm.prank(trustedAggregators[0]);
@@ -1386,7 +1407,7 @@ contract AggregatorBatchesTest is Test {
         batch1Ids[0] = newReqId1;
         vm.prank(trustedAggregators[0]);
         aggregator.createBatchForRequestsWithNumber(batch1Ids, 1);
-        
+
         // Create batch 2
         uint256 newReqId2 = 302;
         vm.prank(trustedAggregators[0]);
@@ -1395,7 +1416,7 @@ contract AggregatorBatchesTest is Test {
         batch2Ids[0] = newReqId2;
         vm.prank(trustedAggregators[0]);
         aggregator.createBatchForRequestsWithNumber(batch2Ids, 2);
-        
+
         // Create batch 3
         uint256 newReqId3 = 303;
         vm.prank(trustedAggregators[0]);
@@ -1404,7 +1425,7 @@ contract AggregatorBatchesTest is Test {
         batch3Ids[0] = newReqId3;
         vm.prank(trustedAggregators[0]);
         aggregator.createBatchForRequestsWithNumber(batch3Ids, 3);
-        
+
         // Create batch 4
         uint256 newReqId4 = 304;
         vm.prank(trustedAggregators[0]);
@@ -1413,55 +1434,55 @@ contract AggregatorBatchesTest is Test {
         batch4Ids[0] = newReqId4;
         vm.prank(trustedAggregators[0]);
         aggregator.createBatchForRequestsWithNumber(batch4Ids, 4);
-        
+
         // Now process batch 1
         vm.prank(trustedAggregators[0]);
         aggregator.submitHashroot(1, bytes("hashroot"));
         vm.prank(trustedAggregators[1]);
         aggregator.submitHashroot(1, bytes("hashroot"));
-        
+
         // Process batch 2
         vm.prank(trustedAggregators[0]);
         aggregator.submitHashroot(2, bytes("hashroot"));
         vm.prank(trustedAggregators[1]);
         aggregator.submitHashroot(2, bytes("hashroot"));
-        
+
         // Process batch 3
         vm.prank(trustedAggregators[0]);
         aggregator.submitHashroot(3, bytes("hashroot"));
         vm.prank(trustedAggregators[1]);
         aggregator.submitHashroot(3, bytes("hashroot"));
-        
+
         // Process batch 4
         vm.prank(trustedAggregators[0]);
         aggregator.submitHashroot(4, bytes("hashroot"));
         vm.prank(trustedAggregators[1]);
         aggregator.submitHashroot(4, bytes("hashroot"));
-        
+
         // Process batch 5
         vm.prank(trustedAggregators[0]);
         aggregator.submitHashroot(5, bytes("hashroot"));
         vm.prank(trustedAggregators[1]);
         aggregator.submitHashroot(5, bytes("hashroot"));
-        
+
         // Verify batch 5 is processed
         (, bool batch5Processed,) = aggregator.getBatch(explicitBatchNumber2);
         assertTrue(batch5Processed, "Batch 5 should be processed");
-        
+
         // TEST CASE 1: Try to process batch 10 directly (should fail)
         // Since we need to process batches in sequence, we get "Batches must be processed in sequence"
         // (The validation for sequential processing comes before checking if the batch exists)
         vm.prank(trustedAggregators[0]);
         vm.expectRevert("Batches must be processed in sequence; can't skip batches");
         aggregator.submitHashroot(explicitBatchNumber, bytes("hashroot for batch 10"));
-        
+
         // TEST CASE 2: Try to process an invalid batch that's next in sequence (batch 6 doesn't exist yet)
         vm.prank(trustedAggregators[0]);
         vm.expectRevert("Batch does not exist");
         aggregator.submitHashroot(6, bytes("hashroot for batch 6"));
-        
+
         // Create missing batches 6-9 to fill the gaps
-        
+
         // Create batch 6
         uint256 newReqId6 = 306;
         vm.prank(trustedAggregators[0]);
@@ -1470,7 +1491,7 @@ contract AggregatorBatchesTest is Test {
         batch6Ids[0] = newReqId6;
         vm.prank(trustedAggregators[0]);
         aggregator.createBatchForRequestsWithNumber(batch6Ids, 6);
-        
+
         // Create batch 7
         uint256 newReqId7 = 307;
         vm.prank(trustedAggregators[0]);
@@ -1479,7 +1500,7 @@ contract AggregatorBatchesTest is Test {
         batch7Ids[0] = newReqId7;
         vm.prank(trustedAggregators[0]);
         aggregator.createBatchForRequestsWithNumber(batch7Ids, 7);
-        
+
         // Create batch 8
         uint256 newReqId8 = 308;
         vm.prank(trustedAggregators[0]);
@@ -1488,7 +1509,7 @@ contract AggregatorBatchesTest is Test {
         batch8Ids[0] = newReqId8;
         vm.prank(trustedAggregators[0]);
         aggregator.createBatchForRequestsWithNumber(batch8Ids, 8);
-        
+
         // Create batch 9
         uint256 newReqId9 = 309;
         vm.prank(trustedAggregators[0]);
@@ -1497,88 +1518,89 @@ contract AggregatorBatchesTest is Test {
         batch9Ids[0] = newReqId9;
         vm.prank(trustedAggregators[0]);
         aggregator.createBatchForRequestsWithNumber(batch9Ids, 9);
-        
+
         // Now process each gap batch in sequence
-        
+
         // Process batch 6
         vm.prank(trustedAggregators[0]);
         aggregator.submitHashroot(6, bytes("hashroot"));
         vm.prank(trustedAggregators[1]);
         aggregator.submitHashroot(6, bytes("hashroot"));
-        
+
         // Process batch 7
         vm.prank(trustedAggregators[0]);
         aggregator.submitHashroot(7, bytes("hashroot"));
         vm.prank(trustedAggregators[1]);
         aggregator.submitHashroot(7, bytes("hashroot"));
-        
+
         // Process batch 8
         vm.prank(trustedAggregators[0]);
         aggregator.submitHashroot(8, bytes("hashroot"));
         vm.prank(trustedAggregators[1]);
         aggregator.submitHashroot(8, bytes("hashroot"));
-        
+
         // Process batch 9
         vm.prank(trustedAggregators[0]);
         aggregator.submitHashroot(9, bytes("hashroot"));
         vm.prank(trustedAggregators[1]);
         aggregator.submitHashroot(9, bytes("hashroot"));
-        
+
         // TEST CASE: Now that all gaps are filled, we should be able to process batch 10
         vm.prank(trustedAggregators[0]);
         aggregator.submitHashroot(explicitBatchNumber, bytes("hashroot for batch 10"));
         vm.prank(trustedAggregators[1]);
         aggregator.submitHashroot(explicitBatchNumber, bytes("hashroot for batch 10"));
-        
+
         // Verify batch 10 is processed
         (, bool batch10Processed,) = aggregator.getBatch(explicitBatchNumber);
         assertTrue(batch10Processed, "Batch 10 should be processed now that all gaps are filled");
-        
+
         // Verify that the latest processed batch number is updated to 10
         assertEq(aggregator.getLatestProcessedBatchNumber(), explicitBatchNumber, "Latest processed batch should be 10");
     }
-    
+
     /**
      * @dev Test submitAndCreateBatchWithNumber functionality
      */
     function testSubmitAndCreateBatchWithNumber() public {
         // Create commitment requests
         IAggregatorBatches.CommitmentRequest[] memory requests = new IAggregatorBatches.CommitmentRequest[](3);
-        
+
         requests[0] = IAggregatorBatches.CommitmentRequest({
             requestID: 301,
             payload: bytes("payload 301"),
             authenticator: bytes("auth 301")
         });
-        
+
         requests[1] = IAggregatorBatches.CommitmentRequest({
             requestID: 302,
             payload: bytes("payload 302"),
             authenticator: bytes("auth 302")
         });
-        
+
         requests[2] = IAggregatorBatches.CommitmentRequest({
             requestID: 303,
             payload: bytes("payload 303"),
             authenticator: bytes("auth 303")
         });
-        
+
         // Submit and create batch with explicit number
         uint256 explicitBatchNumber = 20;
         vm.prank(trustedAggregators[0]);
-        (uint256 batchNumber, uint256 successCount) = aggregator.submitAndCreateBatchWithNumber(requests, explicitBatchNumber);
-        
+        (uint256 batchNumber, uint256 successCount) =
+            aggregator.submitAndCreateBatchWithNumber(requests, explicitBatchNumber);
+
         // Verify the results
         assertEq(batchNumber, explicitBatchNumber, "Batch should have explicit number");
         assertEq(successCount, 3, "All 3 commitments should be successful");
-        
+
         // Check batch contents
         (IAggregatorBatches.CommitmentRequest[] memory batchRequests,,) = aggregator.getBatch(explicitBatchNumber);
         assertEq(batchRequests.length, 3, "Batch should have 3 requests");
-        
+
         // Verify the latest batch number is updated
         assertEq(aggregator.getLatestBatchNumber(), explicitBatchNumber, "Latest batch number should be updated");
-        
+
         // Create another batch with an explicit number different from the first
         IAggregatorBatches.CommitmentRequest[] memory requests2 = new IAggregatorBatches.CommitmentRequest[](1);
         requests2[0] = IAggregatorBatches.CommitmentRequest({
@@ -1586,16 +1608,17 @@ contract AggregatorBatchesTest is Test {
             payload: bytes("payload 304"),
             authenticator: bytes("auth 304")
         });
-        
+
         uint256 explicitBatchNumber2 = 15; // Different from the first one
-        
+
         vm.prank(trustedAggregators[0]);
-        (uint256 batchNumber2, uint256 successCount2) = aggregator.submitAndCreateBatchWithNumber(requests2, explicitBatchNumber2);
-        
+        (uint256 batchNumber2, uint256 successCount2) =
+            aggregator.submitAndCreateBatchWithNumber(requests2, explicitBatchNumber2);
+
         // Verify the results
         assertEq(batchNumber2, explicitBatchNumber2, "Batch should have explicit number");
         assertEq(successCount2, 1, "All 1 commitment should be successful");
-        
+
         // Latest batch number should still be 20 (higher than 15)
         assertEq(aggregator.getLatestBatchNumber(), explicitBatchNumber, "Latest batch number should still be 20");
     }
