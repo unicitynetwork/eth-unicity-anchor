@@ -269,6 +269,8 @@ describe('Gateway SMT Synchronization Tests', () => {
   
   // Test 1: Create and process initial batches to set up data for sync tests
   it('should create and process multiple batches to prepare test data', async () => {
+    // Use a much longer timeout for this test since it involves multiple blockchain transactions
+    jest.setTimeout(300000); // 5 minutes
     if (!contractAddress) {
       console.log('Skipping test due to missing CONTRACT_ADDRESS');
       return;

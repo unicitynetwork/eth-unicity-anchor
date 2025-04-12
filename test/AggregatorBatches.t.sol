@@ -485,6 +485,75 @@ contract AggregatorBatchesTest is Test {
         assertEq(requests[0].requestID, 100, "Only valid request ID should be included");
     }
 
+    /**
+     * @dev Test creating batches with overlapping request IDs
+     * Verifies the specific behavior when attempting to include the same request in two different batches
+     */
+    function testOverlappingBatches() public {
+        // Create several test commitments
+        vm.startPrank(trustedAggregators[0]);
+        aggregator.submitCommitment(601, bytes("payload 601"), bytes("auth 601"));
+        aggregator.submitCommitment(602, bytes("payload 602"), bytes("auth 602"));
+        aggregator.submitCommitment(603, bytes("payload 603"), bytes("auth 603"));
+        aggregator.submitCommitment(604, bytes("payload 604"), bytes("auth 604"));
+        aggregator.submitCommitment(605, bytes("payload 605"), bytes("auth 605"));
+        vm.stopPrank();
+
+        // Create the first batch with the first 3 requests (601, 602, 603)
+        uint256[] memory firstBatchRequestIDs = new uint256[](3);
+        firstBatchRequestIDs[0] = 601;
+        firstBatchRequestIDs[1] = 602;
+        firstBatchRequestIDs[2] = 603;
+
+        vm.prank(trustedAggregators[0]);
+        aggregator.createBatchForRequests(firstBatchRequestIDs);
+
+        // Verify the unprocessed pool no longer contains the first 3 requests
+        assertFalse(aggregator.isRequestUnprocessed(601), "Request 601 should no longer be in unprocessed pool");
+        assertFalse(aggregator.isRequestUnprocessed(602), "Request 602 should no longer be in unprocessed pool");
+        assertFalse(aggregator.isRequestUnprocessed(603), "Request 603 should no longer be in unprocessed pool");
+        assertTrue(aggregator.isRequestUnprocessed(604), "Request 604 should still be in unprocessed pool");
+        assertTrue(aggregator.isRequestUnprocessed(605), "Request 605 should still be in unprocessed pool");
+
+        // Now try to create a second batch that tries to include some already batched requests
+        // Specifically, requests 603, 604, 605 (where 603 is already in batch1)
+        uint256[] memory secondBatchRequestIDs = new uint256[](3);
+        secondBatchRequestIDs[0] = 603; // Already in batch1
+        secondBatchRequestIDs[1] = 604; // Not yet in a batch
+        secondBatchRequestIDs[2] = 605; // Not yet in a batch
+
+        vm.prank(trustedAggregators[0]);
+        uint256 batch2 = aggregator.createBatchForRequests(secondBatchRequestIDs);
+
+        // Verify the second batch only contains the valid unprocessed requests (604, 605)
+        (IAggregatorBatches.CommitmentRequest[] memory batch2Requests,,) = aggregator.getBatch(batch2);
+        assertEq(batch2Requests.length, 2, "Second batch should only contain 2 requests (604, 605)");
+
+        // Verify the specific requests in batch2
+        bool found604 = false;
+        bool found605 = false;
+
+        for (uint256 i = 0; i < batch2Requests.length; i++) {
+            if (batch2Requests[i].requestID == 604) found604 = true;
+            if (batch2Requests[i].requestID == 605) found605 = true;
+        }
+
+        assertTrue(found604, "Batch 2 should contain request 604");
+        assertTrue(found605, "Batch 2 should contain request 605");
+
+        // Verify we can now resubmit the exact same commitment without modifying it
+        vm.prank(trustedAggregators[0]);
+        aggregator.submitCommitment(601, bytes("payload 601"), bytes("auth 601"));
+
+        // It should NOT be added back to the unprocessed pool
+        assertFalse(aggregator.isRequestUnprocessed(601), "Request 601 should not be added back to unprocessed pool");
+
+        // Try to modify a commitment that was in a batch
+        vm.prank(trustedAggregators[0]);
+        vm.expectRevert("Cannot modify a commitment that was previously in a batch");
+        aggregator.submitCommitment(601, bytes("different payload"), bytes("auth 601"));
+    }
+
     function testGetLatestUnprocessedBatch() public {
         // Create 3 batches
         vm.startPrank(trustedAggregators[0]);
