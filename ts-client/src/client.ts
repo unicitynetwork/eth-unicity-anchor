@@ -185,6 +185,14 @@ export class UniCityAnchorClient {
   }
 
   /**
+   * Get the next available batch number for auto-numbering (first available gap)
+   * @returns The next available batch number
+   */
+  public async getNextAutoNumberedBatch(): Promise<bigint> {
+    return await this.contract.getNextAutoNumberedBatch();
+  }
+
+  /**
    * Get the latest unprocessed batch
    * @returns Tuple containing batch number and array of commitment requests
    */

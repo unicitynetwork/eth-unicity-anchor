@@ -147,6 +147,26 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
   }
 
   /**
+   * Create a new batch with specific request IDs and an explicit batch number
+   * @param requestIDs Array of request IDs to include in the batch
+   * @param explicitBatchNumber The explicit batch number to use for this batch
+   * @returns The created batch number and transaction result
+   */
+  public async createBatchForRequestsWithNumber(
+    requestIDs: (bigint | string)[],
+    explicitBatchNumber: bigint | string,
+  ): Promise<{ batchNumber: bigint; result: TransactionResult }> {
+    // Convert string IDs to BigInt
+    const ids = requestIDs.map((id) => (typeof id === 'string' ? BigInt(id) : id));
+    const batchNum = typeof explicitBatchNumber === 'string' ? BigInt(explicitBatchNumber) : explicitBatchNumber;
+
+    const result = await this.executeTransaction('createBatchForRequestsWithNumber', [ids, batchNum]);
+
+    // Return the batch number (should be the same as the explicitBatchNumber if successful)
+    return { batchNumber: batchNum, result };
+  }
+
+  /**
    * Start automatic batch creation based on threshold or interval
    */
   public startAutoBatchCreation(): void {
@@ -319,6 +339,61 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
     if (result.success) {
       if ('batchNumber' in result) {
         batchNumber = result.batchNumber as bigint;
+      }
+      if ('successCount' in result) {
+        successCount = result.successCount as bigint;
+      }
+    }
+    
+    return { batchNumber, successCount, result };
+  }
+
+  /**
+   * Submit multiple commitments and create a batch with them with an explicit batch number
+   * @param requests Array of commitment requests to submit
+   * @param explicitBatchNumber The explicit batch number to use for this batch
+   * @returns Transaction result with batch number and success count
+   */
+  public async submitAndCreateBatchWithNumber(
+    requests: CommitmentRequest[],
+    explicitBatchNumber: bigint | string,
+  ): Promise<{ batchNumber: bigint; successCount: bigint; result: TransactionResult }> {
+    // Validate all requests first
+    const validRequests = requests.filter(request => this.validateCommitment(request));
+    
+    if (validRequests.length === 0) {
+      return {
+        batchNumber: BigInt(0),
+        successCount: BigInt(0),
+        result: {
+          success: false,
+          error: new Error('No valid commitment requests provided')
+        }
+      };
+    }
+    
+    // Convert to contract format
+    const contractRequests = validRequests.map(request => ({
+      requestID: typeof request.requestID === 'string' ? BigInt(request.requestID) : request.requestID,
+      payload: typeof request.payload === 'string' ? new TextEncoder().encode(request.payload) : request.payload,
+      authenticator: typeof request.authenticator === 'string' ? 
+        new TextEncoder().encode(request.authenticator) : request.authenticator
+    }));
+    
+    const batchNum = typeof explicitBatchNumber === 'string' ? BigInt(explicitBatchNumber) : explicitBatchNumber;
+    
+    // Execute the transaction
+    const result = await this.executeTransaction('submitAndCreateBatchWithNumber', [contractRequests, batchNum]);
+    
+    // Get the returned values from the transaction result
+    let batchNumber = BigInt(0);
+    let successCount = BigInt(0);
+    
+    if (result.success) {
+      if ('batchNumber' in result) {
+        batchNumber = result.batchNumber as bigint;
+      } else {
+        batchNumber = batchNum; // Use the input batch number if not returned in result
       }
       if ('successCount' in result) {
         successCount = result.successCount as bigint;
@@ -620,6 +695,80 @@ export class AggregatorGateway extends UniCityAnchorClient {
       return {
         success: false,
         error: new Error(`Error submitting batch: ${error.message}`),
+        message: 'Failed to process the submitted batch',
+      };
+    }
+  }
+  
+  /**
+   * Submit batch with explicit batch number
+   * @param batch The batch data with commitments
+   * @param explicitBatchNumber The explicit batch number to use
+   * @param authData Authentication data
+   * @returns Transaction result
+   */
+  public async submitBatchWithNumber(
+    batch: BatchSubmissionDto,
+    explicitBatchNumber: bigint | string,
+    authData: { 
+      apiKey?: string; 
+      jwt?: string; 
+      signature?: { 
+        message: string; 
+        signature: string; 
+        signer: string; 
+      } 
+    }
+  ): Promise<TransactionResult> {
+    // Authenticate based on the configured method
+    const isAuthenticated = await this.authenticate(authData);
+    if (!isAuthenticated) {
+      return {
+        success: false,
+        error: new Error('Authentication failed'),
+        message: 'The provided authentication credentials are invalid',
+      };
+    }
+
+    try {
+      // Convert all commitments to internal format
+      const commitments: Commitment[] = [];
+      
+      for (const commitmentDto of batch.commitments) {
+        // Convert from DTO to internal types
+        const requestId = await RequestId.create(commitmentDto.requestID);
+        const transactionHash = new DataHash(Buffer.from(hexToBytes(commitmentDto.payload)));
+        
+        // Extract authenticator parts from combined format
+        const authBytes = hexToBytes(commitmentDto.authenticator);
+        const publicKey = authBytes.slice(0, 32);
+        const stateHash = authBytes.slice(32, 64);
+        const signature = authBytes.slice(64);
+        
+        const authenticator = new Authenticator(
+          Buffer.from(publicKey),
+          Buffer.from(stateHash),
+          Buffer.from(signature)
+        );
+        
+        commitments.push(new Commitment(requestId, transactionHash, authenticator));
+      }
+
+      // Convert commitments to contract format for submitAndCreateBatchWithNumber
+      const contractRequests = commitments.map(commitment => ({
+        requestID: commitment.requestId.toBigInt(),
+        payload: commitment.transactionHash.toBuffer(),
+        authenticator: commitment.authenticator.toBuffer()
+      }));
+
+      const batchNum = typeof explicitBatchNumber === 'string' ? BigInt(explicitBatchNumber) : explicitBatchNumber;
+      
+      // Submit with explicit batch number
+      return await this.executeTransaction('submitAndCreateBatchWithNumber', [contractRequests, batchNum]);
+    } catch (error: any) {
+      return {
+        success: false,
+        error: new Error(`Error submitting batch with explicit number: ${error.message}`),
         message: 'Failed to process the submitted batch',
       };
     }
