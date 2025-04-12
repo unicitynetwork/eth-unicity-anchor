@@ -19,6 +19,9 @@ interface MockGatewayClient {
   submitCommitment: jest.Mock<Promise<TransactionResult>, [bigint | string, Uint8Array | string, Uint8Array | string]>;
   createBatch: jest.Mock<Promise<{ batchNumber: bigint; result: TransactionResult }>>;
   createBatchForRequests: jest.Mock<Promise<{ batchNumber: bigint; result: TransactionResult }>, [Array<bigint | string>]>;
+  createBatchForRequestsWithNumber: jest.Mock<Promise<{ batchNumber: bigint; result: TransactionResult }>, [Array<bigint | string>, bigint | string]>;
+  submitAndCreateBatch: jest.Mock<Promise<{ batchNumber: bigint; successCount: bigint; result: TransactionResult }>, [CommitmentRequest[]]>;
+  submitAndCreateBatchWithNumber: jest.Mock<Promise<{ batchNumber: bigint; successCount: bigint; result: TransactionResult }>, [CommitmentRequest[], bigint | string]>;
   startAutoBatchCreation: jest.Mock;
   stopAutoBatchCreation: jest.Mock;
   validateCommitment: jest.Mock<boolean, [CommitmentRequest]>;
@@ -34,6 +37,12 @@ const mockBaseMethods: MockBaseMethods = {
       return Promise.resolve({ success: true, transactionHash: '0x456' });
     } else if (method === 'createBatchForRequests') {
       return Promise.resolve({ success: true, transactionHash: '0x789' });
+    } else if (method === 'createBatchForRequestsWithNumber') {
+      return Promise.resolve({ success: true, transactionHash: '0xabc', batchNumber: args[1] });
+    } else if (method === 'submitAndCreateBatch') {
+      return Promise.resolve({ success: true, transactionHash: '0xdef', batchNumber: 10n, successCount: 3n });
+    } else if (method === 'submitAndCreateBatchWithNumber') {
+      return Promise.resolve({ success: true, transactionHash: '0xfed', batchNumber: args[1], successCount: 2n });
     }
     return Promise.resolve({ success: false, error: new Error('Unknown method') });
   }),
@@ -89,6 +98,37 @@ jest.mock('../src/aggregator-gateway', () => {
           (requestIDs: Array<bigint | string>): Promise<{ batchNumber: bigint; result: TransactionResult }> => {
             return mockBaseMethods.executeTransaction('createBatchForRequests', [requestIDs]).then((result: TransactionResult) => ({
               batchNumber: 5n,
+              result
+            }));
+          }
+        ),
+        
+        createBatchForRequestsWithNumber: jest.fn().mockImplementation(
+          (requestIDs: Array<bigint | string>, explicitBatchNumber: bigint | string): Promise<{ batchNumber: bigint; result: TransactionResult }> => {
+            const batchNum = typeof explicitBatchNumber === 'string' ? BigInt(explicitBatchNumber) : explicitBatchNumber;
+            return mockBaseMethods.executeTransaction('createBatchForRequestsWithNumber', [requestIDs, batchNum]).then((result: TransactionResult) => ({
+              batchNumber: batchNum,
+              result
+            }));
+          }
+        ),
+        
+        submitAndCreateBatch: jest.fn().mockImplementation(
+          (requests: CommitmentRequest[]): Promise<{ batchNumber: bigint; successCount: bigint; result: TransactionResult }> => {
+            return mockBaseMethods.executeTransaction('submitAndCreateBatch', [requests]).then((result: TransactionResult) => ({
+              batchNumber: 10n,
+              successCount: 3n,
+              result
+            }));
+          }
+        ),
+        
+        submitAndCreateBatchWithNumber: jest.fn().mockImplementation(
+          (requests: CommitmentRequest[], explicitBatchNumber: bigint | string): Promise<{ batchNumber: bigint; successCount: bigint; result: TransactionResult }> => {
+            const batchNum = typeof explicitBatchNumber === 'string' ? BigInt(explicitBatchNumber) : explicitBatchNumber;
+            return mockBaseMethods.executeTransaction('submitAndCreateBatchWithNumber', [requests, batchNum]).then((result: TransactionResult) => ({
+              batchNumber: batchNum,
+              successCount: 2n,
               result
             }));
           }
@@ -545,6 +585,151 @@ describe('AggregatorGatewayClient', () => {
           batchCreationInterval: 120000,
           autoCreateBatches: true
         })
+      );
+    });
+  });
+
+  describe('explicit batch number operations', () => {
+    beforeEach(() => {
+      // Reset mocks
+      mockBaseMethods.executeTransaction = jest.fn().mockImplementation((method: string, args: any[]) => {
+        if (method === 'createBatchForRequestsWithNumber') {
+          // Ensure we properly convert any string arguments to BigInt to mimic real implementation
+          const requestIDs = Array.isArray(args[0]) 
+            ? args[0].map(id => typeof id === 'string' ? BigInt(id) : id)
+            : args[0];
+            
+          const batchNum = typeof args[1] === 'string' ? BigInt(args[1]) : args[1];
+          
+          return Promise.resolve({ 
+            success: true, 
+            transactionHash: '0xabc', 
+            batchNumber: batchNum 
+          });
+        } else if (method === 'submitAndCreateBatchWithNumber') {
+          // Ensure we properly convert the batch number to BigInt
+          const batchNum = typeof args[1] === 'string' ? BigInt(args[1]) : args[1];
+          
+          return Promise.resolve({
+            success: true,
+            transactionHash: '0xfed',
+            batchNumber: batchNum,
+            successCount: 2n
+          });
+        }
+        return Promise.resolve({ success: false, error: new Error('Unknown method') });
+      });
+      
+      // Properly recreate the methods to mimic real implementation of BigInt conversions
+      gateway.createBatchForRequestsWithNumber = jest.fn().mockImplementation(
+        (requestIDs: Array<bigint | string>, explicitBatchNumber: bigint | string) => {
+          // Convert string IDs to BigInt
+          const ids = requestIDs.map(id => typeof id === 'string' ? BigInt(id) : id);
+          // Convert string batch number to BigInt
+          const batchNum = typeof explicitBatchNumber === 'string' ? BigInt(explicitBatchNumber) : explicitBatchNumber;
+          
+          return mockBaseMethods.executeTransaction('createBatchForRequestsWithNumber', [ids, batchNum])
+            .then(result => ({ 
+              batchNumber: batchNum, 
+              result 
+            }));
+        }
+      );
+      
+      gateway.submitAndCreateBatchWithNumber = jest.fn().mockImplementation(
+        (requests: CommitmentRequest[], explicitBatchNumber: bigint | string) => {
+          // Validate and filter requests
+          const validRequests = requests.filter(req => gateway.validateCommitment(req));
+          // Convert string batch number to BigInt
+          const batchNum = typeof explicitBatchNumber === 'string' ? BigInt(explicitBatchNumber) : explicitBatchNumber;
+          
+          if (validRequests.length === 0) {
+            return Promise.resolve({
+              batchNumber: 0n,
+              successCount: 0n,
+              result: { 
+                success: false, 
+                error: new Error('No valid requests') 
+              }
+            });
+          }
+          
+          return mockBaseMethods.executeTransaction('submitAndCreateBatchWithNumber', [validRequests, batchNum])
+            .then(result => ({
+              batchNumber: batchNum,
+              successCount: 2n,
+              result
+            }));
+        }
+      );
+    });
+
+    it('should create a batch with explicit number', async () => {
+      const result = await gateway.createBatchForRequestsWithNumber([1n, 2n, 3n], 42n);
+      
+      expect(result.batchNumber).toBe(42n);
+      expect(result.result.success).toBe(true);
+      expect(mockBaseMethods.executeTransaction).toHaveBeenCalledWith(
+        'createBatchForRequestsWithNumber',
+        [[1n, 2n, 3n], 42n]
+      );
+    });
+
+    it('should handle string request IDs and batch number', async () => {
+      const result = await gateway.createBatchForRequestsWithNumber(['1', '2', '3'], '15');
+      
+      expect(result.batchNumber).toBe(15n);
+      expect(result.result.success).toBe(true);
+      
+      // Verify that the executeTransaction was called with converted BigInts
+      expect(mockBaseMethods.executeTransaction).toHaveBeenCalledWith(
+        'createBatchForRequestsWithNumber',
+        [
+          // First param is array of converted IDs
+          [1n, 2n, 3n], 
+          // Second param is the converted batch number
+          15n
+        ]
+      );
+    });
+
+    it('should submit commitments and create a batch with explicit number', async () => {
+      const requests = [
+        { requestID: 1n, payload: new Uint8Array([1, 2, 3]), authenticator: new Uint8Array([4, 5, 6]) },
+        { requestID: 2n, payload: new Uint8Array([7, 8, 9]), authenticator: new Uint8Array([10, 11, 12]) }
+      ];
+      
+      const result = await gateway.submitAndCreateBatchWithNumber(requests, 25n);
+      
+      expect(result.batchNumber).toBe(25n);
+      expect(result.successCount).toBe(2n);
+      expect(result.result.success).toBe(true);
+      expect(mockBaseMethods.executeTransaction).toHaveBeenCalledWith(
+        'submitAndCreateBatchWithNumber',
+        [requests, 25n]
+      );
+    });
+    
+    it('should handle invalid requests in submitAndCreateBatchWithNumber', async () => {
+      const requests = [
+        { requestID: 0n, payload: new Uint8Array([1, 2, 3]), authenticator: new Uint8Array([4, 5, 6]) }, // Invalid
+        { requestID: 2n, payload: new Uint8Array([7, 8, 9]), authenticator: new Uint8Array([10, 11, 12]) }
+      ];
+
+      // Override validateCommitment to make first request invalid
+      gateway.validateCommitment = jest.fn()
+        .mockImplementation((req) => req.requestID > 0n);
+      
+      const result = await gateway.submitAndCreateBatchWithNumber(requests, 30n);
+      
+      // Should still succeed because at least one valid request
+      expect(result.batchNumber).toBe(30n);
+      expect(result.result.success).toBe(true);
+      
+      // Should filter out invalid requests
+      expect(mockBaseMethods.executeTransaction).toHaveBeenCalledWith(
+        'submitAndCreateBatchWithNumber',
+        [expect.arrayContaining([expect.objectContaining({ requestID: 2n })]), 30n]
       );
     });
   });

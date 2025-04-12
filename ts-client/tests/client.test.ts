@@ -5,6 +5,7 @@ import { bytesToHex, hexToBytes } from '../src/utils';
 interface MockContract {
   getLatestBatchNumber: jest.Mock;
   getLatestProcessedBatchNumber: jest.Mock;
+  getNextAutoNumberedBatch: jest.Mock;
   getCommitment: jest.Mock;
   getBatch: jest.Mock;
   getLatestUnprocessedBatch: jest.Mock;
@@ -56,6 +57,7 @@ type MockEthers = {
 const mockContractMethods: MockContract & MockEventEmitter = {
   getLatestBatchNumber: jest.fn().mockResolvedValue(5n),
   getLatestProcessedBatchNumber: jest.fn().mockResolvedValue(3n),
+  getNextAutoNumberedBatch: jest.fn().mockResolvedValue(1n),
   getCommitment: jest.fn().mockResolvedValue({
     requestID: 123n,
     payload: '0x123456',
@@ -371,6 +373,14 @@ describe('UniCityAnchorClient', () => {
       const batchNumber = await client.getLatestProcessedBatchNumber();
       expect(batchNumber).toBe(3n);
       expect(mockContractMethods.getLatestProcessedBatchNumber).toHaveBeenCalled();
+    });
+  });
+
+  describe('getNextAutoNumberedBatch', () => {
+    it('should return the next available auto-numbered batch', async () => {
+      const batchNumber = await client.getNextAutoNumberedBatch();
+      expect(batchNumber).toBe(1n);
+      expect(mockContractMethods.getNextAutoNumberedBatch).toHaveBeenCalled();
     });
   });
 
