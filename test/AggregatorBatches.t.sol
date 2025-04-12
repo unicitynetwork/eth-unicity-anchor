@@ -826,6 +826,195 @@ contract AggregatorBatchesTest is Test {
 
         vm.stopPrank();
     }
+    
+    /**
+     * @dev Test creating batches with explicit batch numbers
+     * Verifies the behavior when creating batches with non-sequential numbers
+     */
+    function testCreateBatchWithExplicitNumber() public {
+        // Submit several commitments
+        vm.startPrank(trustedAggregators[0]);
+        aggregator.submitCommitment(201, bytes("payload 201"), bytes("auth 201"));
+        aggregator.submitCommitment(202, bytes("payload 202"), bytes("auth 202"));
+        aggregator.submitCommitment(203, bytes("payload 203"), bytes("auth 203"));
+        aggregator.submitCommitment(204, bytes("payload 204"), bytes("auth 204"));
+        aggregator.submitCommitment(205, bytes("payload 205"), bytes("auth 205"));
+        vm.stopPrank();
+        
+        // Create batch with a high batch number (creates a gap)
+        uint256[] memory requestIds = new uint256[](2);
+        requestIds[0] = 201;
+        requestIds[1] = 202;
+        
+        uint256 explicitBatchNumber = 10; // Create batch #10
+        
+        vm.prank(trustedAggregators[0]);
+        uint256 createdBatchNumber = aggregator.createBatchForRequestsWithNumber(requestIds, explicitBatchNumber);
+        
+        // Verify the batch was created with the explicit number
+        assertEq(createdBatchNumber, explicitBatchNumber, "Batch should have explicit number");
+        
+        // Check the latest batch number is updated
+        assertEq(aggregator.getLatestBatchNumber(), explicitBatchNumber, "Latest batch number should be updated");
+        
+        // Verify the batch contents
+        (IAggregatorBatches.CommitmentRequest[] memory batch10Requests,,) = aggregator.getBatch(explicitBatchNumber);
+        assertEq(batch10Requests.length, 2, "Batch 10 should have 2 requests");
+        
+        // Create a second batch with a different explicit number (lower than the first one)
+        uint256[] memory requestIds2 = new uint256[](2);
+        requestIds2[0] = 203;
+        requestIds2[1] = 204;
+        
+        uint256 explicitBatchNumber2 = 5; // Create batch #5
+        
+        vm.prank(trustedAggregators[0]);
+        uint256 createdBatchNumber2 = aggregator.createBatchForRequestsWithNumber(requestIds2, explicitBatchNumber2);
+        
+        // Verify the second batch
+        assertEq(createdBatchNumber2, explicitBatchNumber2, "Second batch should have explicit number");
+        
+        // Check the latest batch number is still 10 (not changed)
+        assertEq(aggregator.getLatestBatchNumber(), explicitBatchNumber, "Latest batch number should still be 10");
+        
+        // Verify the second batch contents
+        (IAggregatorBatches.CommitmentRequest[] memory batch5Requests,,) = aggregator.getBatch(explicitBatchNumber2);
+        assertEq(batch5Requests.length, 2, "Batch 5 should have 2 requests");
+        
+        // Try to create batch with already used batch number (should revert)
+        uint256[] memory requestIds3 = new uint256[](1);
+        requestIds3[0] = 205;
+        
+        vm.prank(trustedAggregators[0]);
+        vm.expectRevert("Batch number already exists");
+        aggregator.createBatchForRequestsWithNumber(requestIds3, explicitBatchNumber);
+        
+        // Try to create batch with batch number 0 (should revert)
+        vm.prank(trustedAggregators[0]);
+        vm.expectRevert("Batch number must be greater than 0");
+        aggregator.createBatchForRequestsWithNumber(requestIds3, 0);
+        
+        // Verify that processing must still follow sequential order
+        // Try processing batch 10 directly (should fail)
+        vm.prank(trustedAggregators[0]);
+        vm.expectRevert("Batches must be processed in sequence; can't skip batches");
+        aggregator.submitHashroot(explicitBatchNumber, bytes("hashroot10"));
+        
+        // Process batches in sequence (must process all batches from 1 to the highest batch number)
+        // First, we need to create batches for all the sequence before trying to process them
+        // Otherwise, we'll get "Invalid batch number" errors
+        
+        for (uint256 i = 1; i < explicitBatchNumber2; i++) {
+            // Skip creating batch for batch numbers that already exist
+            if (i == explicitBatchNumber2) {
+                continue;
+            }
+            
+            // Create a new commitment for each batch to avoid running out
+            uint256 newReqId = 300 + i;
+            
+            // Submit a new commitment each time
+            vm.prank(trustedAggregators[0]);
+            aggregator.submitCommitment(newReqId, bytes("dummy payload"), bytes("dummy auth"));
+            
+            // Create dummy batches to fill the gaps
+            uint256[] memory dummyRequestIds = new uint256[](1);
+            dummyRequestIds[0] = newReqId;
+            
+            // Create the batch with explicit number
+            vm.prank(trustedAggregators[0]);
+            aggregator.createBatchForRequestsWithNumber(dummyRequestIds, i);
+        }
+        
+        // Now process all batches in sequence
+        for (uint256 i = 1; i <= explicitBatchNumber; i++) {
+            // Skip non-existent batches
+            bool batchExists = false;
+            try aggregator.getBatch(i) returns (IAggregatorBatches.CommitmentRequest[] memory, bool, bytes memory) {
+                batchExists = true;
+            } catch {
+                continue;
+            }
+            
+            if (batchExists) {
+                vm.prank(trustedAggregators[0]);
+                aggregator.submitHashroot(i, bytes("hashroot"));
+                
+                // Add a second vote to reach the required threshold (2 votes)
+                vm.prank(trustedAggregators[1]);
+                aggregator.submitHashroot(i, bytes("hashroot"));
+            }
+        }
+        
+        // Verify both batches are now processed
+        (, bool batch5Processed,) = aggregator.getBatch(explicitBatchNumber2);
+        assertTrue(batch5Processed, "Batch 5 should be processed");
+        
+        (, bool batch10Processed,) = aggregator.getBatch(explicitBatchNumber);
+        assertTrue(batch10Processed, "Batch 10 should be processed");
+    }
+    
+    /**
+     * @dev Test submitAndCreateBatchWithNumber functionality
+     */
+    function testSubmitAndCreateBatchWithNumber() public {
+        // Create commitment requests
+        IAggregatorBatches.CommitmentRequest[] memory requests = new IAggregatorBatches.CommitmentRequest[](3);
+        
+        requests[0] = IAggregatorBatches.CommitmentRequest({
+            requestID: 301,
+            payload: bytes("payload 301"),
+            authenticator: bytes("auth 301")
+        });
+        
+        requests[1] = IAggregatorBatches.CommitmentRequest({
+            requestID: 302,
+            payload: bytes("payload 302"),
+            authenticator: bytes("auth 302")
+        });
+        
+        requests[2] = IAggregatorBatches.CommitmentRequest({
+            requestID: 303,
+            payload: bytes("payload 303"),
+            authenticator: bytes("auth 303")
+        });
+        
+        // Submit and create batch with explicit number
+        uint256 explicitBatchNumber = 20;
+        vm.prank(trustedAggregators[0]);
+        (uint256 batchNumber, uint256 successCount) = aggregator.submitAndCreateBatchWithNumber(requests, explicitBatchNumber);
+        
+        // Verify the results
+        assertEq(batchNumber, explicitBatchNumber, "Batch should have explicit number");
+        assertEq(successCount, 3, "All 3 commitments should be successful");
+        
+        // Check batch contents
+        (IAggregatorBatches.CommitmentRequest[] memory batchRequests,,) = aggregator.getBatch(explicitBatchNumber);
+        assertEq(batchRequests.length, 3, "Batch should have 3 requests");
+        
+        // Verify the latest batch number is updated
+        assertEq(aggregator.getLatestBatchNumber(), explicitBatchNumber, "Latest batch number should be updated");
+        
+        // Create another batch with an explicit number different from the first
+        IAggregatorBatches.CommitmentRequest[] memory requests2 = new IAggregatorBatches.CommitmentRequest[](1);
+        requests2[0] = IAggregatorBatches.CommitmentRequest({
+            requestID: 304,
+            payload: bytes("payload 304"),
+            authenticator: bytes("auth 304")
+        });
+        
+        uint256 explicitBatchNumber2 = 15; // Different from the first one
+        
+        vm.prank(trustedAggregators[0]);
+        (uint256 batchNumber2, uint256 successCount2) = aggregator.submitAndCreateBatchWithNumber(requests2, explicitBatchNumber2);
+        
+        // Verify the results
+        assertEq(batchNumber2, explicitBatchNumber2, "Batch should have explicit number");
+        assertEq(successCount2, 1, "All 1 commitment should be successful");
+        
+        // Latest batch number should still be 20 (higher than 15)
+        assertEq(aggregator.getLatestBatchNumber(), explicitBatchNumber, "Latest batch number should still be 20");
+    }
 
     function testCreateBatchForRequestsWithNoValidRequests() public {
         // Try to create batch with only invalid request IDs

@@ -242,6 +242,42 @@ contract AggregatorBatches is IAggregatorBatches {
         require(validRequestIDs.length > 0, "No valid unprocessed request IDs provided");
         return _createBatchInternal(validRequestIDs);
     }
+    
+    /**
+     * @dev Creates a new batch from the current pool of selected unprocessed commitments with explicit batch number
+     * @param requestIDs Array of specific request IDs to include in the batch
+     * @param explicitBatchNumber The explicit batch number to use for this batch
+     * @return batchNumber The number of the newly created batch
+     */
+    function createBatchForRequestsWithNumber(uint256[] calldata requestIDs, uint256 explicitBatchNumber)
+        external
+        override
+        onlyTrustedAggregator
+        returns (uint256)
+    {
+        if (requestIDs.length == 0) return 0;
+        require(explicitBatchNumber > 0, "Batch number must be greater than 0");
+
+        // Filter only existing unprocessed requests
+        uint256[] memory filteredRequestIDs = new uint256[](requestIDs.length);
+        uint256 filteredCount = 0;
+
+        for (uint256 i = 0; i < requestIDs.length; i++) {
+            if (unprocessedRequestIds.contains(requestIDs[i])) {
+                filteredRequestIDs[filteredCount] = requestIDs[i];
+                filteredCount++;
+            }
+        }
+
+        // Create a properly sized array with only valid IDs
+        uint256[] memory validRequestIDs = new uint256[](filteredCount);
+        for (uint256 i = 0; i < filteredCount; i++) {
+            validRequestIDs[i] = filteredRequestIDs[i];
+        }
+
+        require(validRequestIDs.length > 0, "No valid unprocessed request IDs provided");
+        return _createBatchWithExplicitNumber(validRequestIDs, explicitBatchNumber);
+    }
 
     /**
      * @dev Submit multiple commitments and create a batch containing them in a single transaction
@@ -318,6 +354,84 @@ contract AggregatorBatches is IAggregatorBatches {
 
         return (batchNumber, successCount);
     }
+    
+    /**
+     * @dev Submit multiple commitments and create a batch containing them with an explicit batch number
+     * @param commitmentRequests Array of commitment requests to submit
+     * @param explicitBatchNumber The explicit batch number to use for this batch
+     * @return batchNumber The number of the newly created batch
+     * @return successCount The number of successfully submitted commitments
+     */
+    function submitAndCreateBatchWithNumber(CommitmentRequest[] calldata commitmentRequests, uint256 explicitBatchNumber)
+        external
+        override
+        onlyTrustedAggregator
+        returns (uint256, uint256)
+    {
+        if (commitmentRequests.length == 0) return (0, 0);
+        require(explicitBatchNumber > 0, "Batch number must be greater than 0");
+
+        // Process each commitment locally without using the external submitCommitments function
+        uint256 successCount = 0;
+        uint256[] memory successfulRequestIds = new uint256[](commitmentRequests.length);
+
+        for (uint256 i = 0; i < commitmentRequests.length; i++) {
+            CommitmentRequest calldata request = commitmentRequests[i];
+
+            // Check if this request has been in a batch before
+            if (requestAddedToBatch[request.requestID]) {
+                // Get the stored commitment data
+                CommitmentRequest storage existingCommitment = commitments[request.requestID];
+
+                // Check if payload and authenticator match exactly
+                bytes32 existingPayloadHash = keccak256(existingCommitment.payload);
+                bytes32 newPayloadHash = keccak256(request.payload);
+                bytes32 existingAuthHash = keccak256(existingCommitment.authenticator);
+                bytes32 newAuthHash = keccak256(request.authenticator);
+
+                // If either payload or authenticator differ, skip this request
+                if (existingPayloadHash != newPayloadHash || existingAuthHash != newAuthHash) {
+                    continue; // Skip this request but continue processing others
+                }
+
+                // If they match exactly, mark as success but don't add to unprocessed
+                successfulRequestIds[successCount] = request.requestID;
+                successCount++;
+                continue;
+            }
+
+            // Request is either in the unprocessed pool or brand new
+            commitments[request.requestID] = CommitmentRequest({
+                requestID: request.requestID,
+                payload: request.payload,
+                authenticator: request.authenticator
+            });
+
+            if (!unprocessedRequestIds.contains(request.requestID)) {
+                unprocessedRequestIds.add(request.requestID);
+            }
+
+            emit RequestSubmitted(request.requestID, request.payload);
+            successfulRequestIds[successCount] = request.requestID;
+            successCount++;
+        }
+
+        emit RequestsSubmitted(commitmentRequests.length, successCount);
+
+        // If no commitments were successfully submitted, return early
+        if (successCount == 0) return (0, 0);
+
+        // Create properly sized array of request IDs for batch creation
+        uint256[] memory requestIds = new uint256[](successCount);
+        for (uint256 i = 0; i < successCount; i++) {
+            requestIds[i] = successfulRequestIds[i];
+        }
+
+        // Create a batch with these request IDs and the explicit batch number
+        uint256 batchNumber = _createBatchWithExplicitNumber(requestIds, explicitBatchNumber);
+
+        return (batchNumber, successCount);
+    }
 
     /**
      * @dev Internal function to create a batch from specified request IDs
@@ -325,24 +439,37 @@ contract AggregatorBatches is IAggregatorBatches {
      * @return The new batch number
      */
     function _createBatchInternal(uint256[] memory requestIDs) private returns (uint256) {
-        // Create a new batch
+        // Create a new batch with auto-incremented number
         latestBatchNumber++;
         uint256 newBatchNumber = latestBatchNumber;
 
-        // Store only the request IDs in the batch
-        //        uint256[] memory batchRequestIds = new uint256[](requestIDs.length);
+        return _createBatchWithExplicitNumber(requestIDs, newBatchNumber);
+    }
+    
+    /**
+     * @dev Internal function to create a batch with an explicit batch number
+     * @param requestIDs Array of request IDs to include in the batch
+     * @param explicitBatchNumber The explicit batch number to use
+     * @return The created batch number (same as explicitBatchNumber if successful)
+     */
+    function _createBatchWithExplicitNumber(uint256[] memory requestIDs, uint256 explicitBatchNumber) private returns (uint256) {
+        require(explicitBatchNumber > 0, "Batch number must be greater than 0");
+        require(batches[explicitBatchNumber].batchNumber == 0, "Batch number already exists");
+        
+        // Update latestBatchNumber if the explicit number is greater
+        if (explicitBatchNumber > latestBatchNumber) {
+            latestBatchNumber = explicitBatchNumber;
+        }
+        
+        // Mark all requests as having been added to a batch
         for (uint256 i = 0; i < requestIDs.length; i++) {
-            //            batchRequestIds[i] = requestIDs[i];
-
-            // Mark this request as having been added to a batch
             // This prevents future modifications to the commitment
             requestAddedToBatch[requestIDs[i]] = true;
         }
 
         // Store the new batch
-        batches[newBatchNumber] = Batch({
-            batchNumber: newBatchNumber,
-            //            requestIds: batchRequestIds,
+        batches[explicitBatchNumber] = Batch({
+            batchNumber: explicitBatchNumber,
             requestIds: requestIDs,
             hashroot: bytes(""),
             processed: false
@@ -351,9 +478,9 @@ contract AggregatorBatches is IAggregatorBatches {
         // Remove processed commitments from the unprocessed list
         _removeProcessedCommitments(requestIDs);
 
-        emit BatchCreated(newBatchNumber, requestIDs.length);
+        emit BatchCreated(explicitBatchNumber, requestIDs.length);
 
-        return newBatchNumber;
+        return explicitBatchNumber;
     }
 
     /**

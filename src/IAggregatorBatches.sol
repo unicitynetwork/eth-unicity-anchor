@@ -85,6 +85,19 @@ interface IAggregatorBatches {
     function createBatchForRequests(uint256[] calldata requestIDs) external returns (uint256 batchNumber);
 
     /**
+     * @dev Creates a new batch from the current pool of selected unprocessed commitments with an explicit batch number
+     * @param requestIDs Array of specific request IDs to include in the batch
+     * @param explicitBatchNumber The explicit batch number to use for this batch
+     * @return batchNumber The number of the newly created batch
+     *
+     * This allows creating batches with specific numbers, potentially creating gaps in the batch sequence.
+     * When gaps exist, the system will still track latestBatchNumber correctly, but batch processing must
+     * still occur in sequential order.
+     */
+    function createBatchForRequestsWithNumber(uint256[] calldata requestIDs, uint256 explicitBatchNumber) 
+        external returns (uint256 batchNumber);
+
+    /**
      * @dev Submit multiple commitments and create a batch containing them in a single transaction
      * @param commitmentRequests Array of commitment requests to submit
      * @return batchNumber The number of the newly created batch
@@ -95,6 +108,25 @@ interface IAggregatorBatches {
      * If all submissions fail, no batch is created and the function returns batch number 0.
      */
     function submitAndCreateBatch(CommitmentRequest[] calldata commitmentRequests)
+        external
+        returns (uint256 batchNumber, uint256 successCount);
+        
+    /**
+     * @dev Submit multiple commitments and create a batch containing them with an explicit batch number
+     * @param commitmentRequests Array of commitment requests to submit
+     * @param explicitBatchNumber The explicit batch number to use for this batch
+     * @return batchNumber The number of the newly created batch
+     * @return successCount The number of successfully submitted commitments
+     *
+     * This function combines submitCommitments and createBatchForRequestsWithNumber in a single atomic operation.
+     * First, it submits all the provided commitments, then creates a batch with the specified number.
+     * If all submissions fail, no batch is created and the function returns batch number 0.
+     *
+     * This allows creating batches with specific numbers, potentially creating gaps in the batch sequence.
+     * When gaps exist, the system will still track latestBatchNumber correctly, but batch processing must
+     * still occur in sequential order.
+     */
+    function submitAndCreateBatchWithNumber(CommitmentRequest[] calldata commitmentRequests, uint256 explicitBatchNumber)
         external
         returns (uint256 batchNumber, uint256 successCount);
 
