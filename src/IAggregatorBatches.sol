@@ -91,8 +91,9 @@ interface IAggregatorBatches {
      * @return batchNumber The number of the newly created batch
      *
      * This allows creating batches with specific numbers, potentially creating gaps in the batch sequence.
-     * When gaps exist, the system will still track latestBatchNumber correctly, but batch processing must
-     * still occur in sequential order.
+     * When gaps exist, the system will track both the highest batch number and the first available gap.
+     * Auto-numbered batches will always use the first available gap, filling in gaps in the sequence.
+     * Regardless of batch numbering, batch processing must still occur in strict sequential order.
      */
     function createBatchForRequestsWithNumber(uint256[] calldata requestIDs, uint256 explicitBatchNumber) 
         external returns (uint256 batchNumber);
@@ -123,8 +124,9 @@ interface IAggregatorBatches {
      * If all submissions fail, no batch is created and the function returns batch number 0.
      *
      * This allows creating batches with specific numbers, potentially creating gaps in the batch sequence.
-     * When gaps exist, the system will still track latestBatchNumber correctly, but batch processing must
-     * still occur in sequential order.
+     * When gaps exist, the system will track both the highest batch number and the first available gap.
+     * Auto-numbered batches will always use the first available gap, filling in gaps in the sequence.
+     * Regardless of batch numbering, batch processing must still occur in strict sequential order.
      */
     function submitAndCreateBatchWithNumber(CommitmentRequest[] calldata commitmentRequests, uint256 explicitBatchNumber)
         external
@@ -159,10 +161,16 @@ interface IAggregatorBatches {
     function getLatestProcessedBatchNumber() external view returns (uint256 batchNumber);
 
     /**
-     * @dev Returns the number of the latest batch
+     * @dev Returns the number of the latest batch (highest batch number created)
      * @return batchNumber The number of the latest batch
      */
     function getLatestBatchNumber() external view returns (uint256 batchNumber);
+    
+    /**
+     * @dev Returns the next available batch number for auto-numbering (first available gap)
+     * @return batchNumber The next available batch number
+     */
+    function getNextAutoNumberedBatch() external view returns (uint256 batchNumber);
 
     /**
      * @dev Returns the hashroot for a specific batch

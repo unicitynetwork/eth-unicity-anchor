@@ -5,7 +5,133 @@ import "./IAggregatorBatches.sol";
 import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
 /**
- * Unicity Aggregator Batches Implementation
+ * @title Unicity Aggregator Batches
+ * @dev A contract for managing the collection, batching, and validation of commitment requests 
+ * in the Unicity protocol. This contract works as a coordination layer between 
+ * users submitting commitments and trusted aggregators processing these commitments
+ * into Sparse Merkle Trees (SMTs) and validating their integrity.
+ * 
+ * == Overview ==
+ * 
+ * The contract handles three main entities:
+ * 1. Commitment Requests: Individual data items with a unique requestID submitted by users.
+ * 2. Batches: Collections of commitment requests grouped together for processing.
+ * 3. Hashroots: The merkle root of a batch after processing by SMT aggregators.
+ * 
+ * The typical flow is:
+ * - Users submit commitment requests through trusted aggregators
+ * - Aggregators create batches from these requests (either automatically numbered or with explicit batch numbers)
+ * - Aggregators process these batches, generating SMT hashroots
+ * - Multiple aggregators vote on hashroots to achieve consensus
+ * - Once enough aggregators agree on a hashroot, the batch is considered processed
+ * 
+ * == Batch Numbering System ==
+ * 
+ * The contract supports two batch numbering approaches:
+ * 
+ * 1. Auto-numbering (implicit): When creating a batch without specifying a number, the contract 
+ *    assigns the next available number, filling gaps in the sequence. Methods:
+ *    - createBatch()
+ *    - createBatchForRequests()
+ *    - submitAndCreateBatch()
+ * 
+ * 2. Explicit numbering: Batches can be created with specific numbers, potentially 
+ *    creating gaps in the sequence. Methods:
+ *    - createBatchForRequestsWithNumber()
+ *    - submitAndCreateBatchWithNumber()
+ * 
+ * The contract tracks:
+ * - highestBatchNumber: The largest batch number that exists
+ * - firstGapIndex: The first available gap in the batch numbering sequence
+ * 
+ * When auto-numbering, the contract always uses firstGapIndex to fill the earliest gap.
+ * 
+ * == Batch Processing ==
+ * 
+ * IMPORTANT: Regardless of how batches are numbered, they MUST be processed in strict 
+ * sequential order. For example, if batches 1, 3, 5, and 10 exist, they must be 
+ * processed in that exact order. The contract prevents processing batch 3 until batch 1 
+ * is processed, and so on.
+ * 
+ * == Commitment Request Management ==
+ * 
+ * - Each commitment has a unique requestID
+ * - Once a commitment is included in a batch, it cannot be modified
+ * - Commitments can be modified while still in the unprocessed pool
+ * - Exact duplicate submissions are silently ignored (same requestID, payload and authenticator)
+ * - Attempting to modify a commitment that was in a batch will cause a revert
+ * 
+ * == Hashroot Voting System ==
+ * 
+ * - Each trusted aggregator can vote on a hashroot for a batch
+ * - An aggregator cannot vote for different hashroots for the same batch
+ * - When the number of votes for a specific hashroot reaches the required threshold, 
+ *   the batch is marked as processed
+ * - The contract tracks all submitted hashroots and their vote counts
+ * 
+ * == Edge Cases ==
+ * 
+ * 1. Double voting: If the same aggregator votes for the same hashroot twice, the second 
+ *    vote is accepted but doesn't increase the vote count.
+ * 
+ * 2. Conflicting votes: If an aggregator tries to vote for a different hashroot for the 
+ *    same batch after already voting, the transaction reverts.
+ * 
+ * 3. Duplicate batch numbers: Attempting to create a batch with a number that already 
+ *    exists will revert.
+ * 
+ * 4. Duplicate commitments: Submitting the exact same commitment (same requestID, payload, 
+ *    and authenticator) is silently accepted without modifying the existing commitment.
+ * 
+ * 5. Modified commitments: Attempting to modify a commitment (same requestID, different 
+ *    payload/authenticator) that was previously included in a batch will revert.
+ * 
+ * 6. Batch processing order: Attempting to process batches out of sequence will revert, 
+ *    even if trying to process a batch that exists.
+ * 
+ * 7. Overlapping batches: If trying to include a commitment in a batch that's already in another 
+ *    batch, that commitment will be silently skipped.
+ * 
+ * 8. Non-existent batches: Attempting to process a batch that doesn't exist will revert.
+ * 
+ * == Usage ==
+ * 
+ * For Commitment Submission:
+ * - submitCommitment(requestID, payload, authenticator) - Submit a single commitment
+ * - submitCommitments(requests) - Submit multiple commitments at once
+ * 
+ * For Batch Creation:
+ * - createBatch() - Creates a batch from all unprocessed commitments
+ * - createBatchForRequests(requestIDs) - Creates a batch from specific commitment requests
+ * - createBatchForRequestsWithNumber(requestIDs, explicitBatchNumber) - Creates a batch with specific number
+ * - submitAndCreateBatch(commitmentRequests) - Submits commitments and creates a batch in one operation
+ * - submitAndCreateBatchWithNumber(commitmentRequests, explicitBatchNumber) - Same with explicit number
+ * 
+ * For Batch Processing:
+ * - submitHashroot(batchNumber, hashroot) - Submit a vote for a batch's hashroot
+ * 
+ * For Batch Information:
+ * - getBatch(batchNumber) - Get full batch information
+ * - getBatchHashroot(batchNumber) - Get the hashroot for a processed batch
+ * - getLatestBatchNumber() - Get the highest batch number in the system
+ * - getLatestProcessedBatchNumber() - Get the highest processed batch number
+ * - getNextAutoNumberedBatch() - Get the next batch number for auto-numbering (first gap)
+ * 
+ * For Commitment Information:
+ * - getCommitment(requestID) - Get commitment details
+ * - isRequestUnprocessed(requestID) - Check if a request is still unprocessed
+ * - getUnprocessedRequestCount() - Get total count of unprocessed requests
+ * - getAllUnprocessedRequests() - Get all unprocessed request IDs
+ * 
+ * For Hashroot Information:
+ * - getHashrootVoteCount(batchNumber, hashroot) - Get votes for a specific hashroot
+ * - getSubmittedHashrootCount(batchNumber) - Get count of unique hashroots submitted
+ * 
+ * Administrative Functions:
+ * - addAggregator(aggregator) - Add a trusted aggregator
+ * - removeAggregator(aggregator) - Remove a trusted aggregator
+ * - updateRequiredVotes(newRequiredVotes) - Update required vote threshold
+ * - transferOwnership(newOwner) - Transfer contract ownership
  */
 contract AggregatorBatches is IAggregatorBatches {
     // Use OpenZeppelin's EnumerableSet for efficient set operations
@@ -19,7 +145,8 @@ contract AggregatorBatches is IAggregatorBatches {
 
     // Storage for batches
     mapping(uint256 => Batch) private batches;
-    uint256 private latestBatchNumber;
+    uint256 private firstGapIndex;     // Tracks the first available gap in batch numbering
+    uint256 private highestBatchNumber; // Tracks the highest batch number created
     uint256 private latestProcessedBatchNumber;
 
     // Aggregator management
@@ -60,7 +187,8 @@ contract AggregatorBatches is IAggregatorBatches {
         }
         totalAggregators = _trustedAggregators.length;
 
-        latestBatchNumber = 0;
+        firstGapIndex = 1;          // First gap starts at index 1
+        highestBatchNumber = 0;      // No batches created yet
         latestProcessedBatchNumber = 0;
     }
 
@@ -439,11 +567,26 @@ contract AggregatorBatches is IAggregatorBatches {
      * @return The new batch number
      */
     function _createBatchInternal(uint256[] memory requestIDs) private returns (uint256) {
-        // Create a new batch with auto-incremented number
-        latestBatchNumber++;
-        uint256 newBatchNumber = latestBatchNumber;
-
+        // Use the first available gap for the new batch number
+        uint256 newBatchNumber = firstGapIndex;
+        
         return _createBatchWithExplicitNumber(requestIDs, newBatchNumber);
+    }
+    
+    /**
+     * @dev Find the next gap in batch numbering after the given index
+     * @param startIndex The index to start searching from
+     * @return The next available batch number (gap)
+     */
+    function _findNextGap(uint256 startIndex) private view returns (uint256) {
+        uint256 nextIndex = startIndex + 1;
+        
+        // Find the next gap
+        while (batches[nextIndex].batchNumber != 0) {
+            nextIndex++;
+        }
+        
+        return nextIndex;
     }
     
     /**
@@ -456,9 +599,14 @@ contract AggregatorBatches is IAggregatorBatches {
         require(explicitBatchNumber > 0, "Batch number must be greater than 0");
         require(batches[explicitBatchNumber].batchNumber == 0, "Batch number already exists");
         
-        // Update latestBatchNumber if the explicit number is greater
-        if (explicitBatchNumber > latestBatchNumber) {
-            latestBatchNumber = explicitBatchNumber;
+        // Update highestBatchNumber if the explicit number is greater
+        if (explicitBatchNumber > highestBatchNumber) {
+            highestBatchNumber = explicitBatchNumber;
+        }
+        
+        // If we're filling the current firstGapIndex, update it to the next gap
+        if (explicitBatchNumber == firstGapIndex) {
+            firstGapIndex = _findNextGap(firstGapIndex);
         }
         
         // Mark all requests as having been added to a batch
@@ -518,8 +666,8 @@ contract AggregatorBatches is IAggregatorBatches {
         returns (uint256 batchNumber, CommitmentRequest[] memory requests)
     {
         // Find the latest unprocessed batch
-        for (uint256 i = latestBatchNumber; i > latestProcessedBatchNumber; i--) {
-            if (!batches[i].processed) {
+        for (uint256 i = highestBatchNumber; i > latestProcessedBatchNumber; i--) {
+            if (batches[i].batchNumber != 0 && !batches[i].processed) {
                 // Convert the request IDs to full commitment data
                 uint256[] storage requestIds = batches[i].requestIds;
                 CommitmentRequest[] memory batchRequests = new CommitmentRequest[](requestIds.length);
@@ -550,7 +698,8 @@ contract AggregatorBatches is IAggregatorBatches {
         override
         returns (CommitmentRequest[] memory requests, bool processed, bytes memory hashroot)
     {
-        require(batchNumber > 0 && batchNumber <= latestBatchNumber, "Invalid batch number");
+        require(batchNumber > 0 && batchNumber <= highestBatchNumber, "Invalid batch number");
+        require(batches[batchNumber].batchNumber != 0, "Batch does not exist");
 
         Batch storage batch = batches[batchNumber];
 
@@ -574,11 +723,19 @@ contract AggregatorBatches is IAggregatorBatches {
     }
 
     /**
-     * @dev Returns the number of the latest batch
+     * @dev Returns the number of the latest batch (highest batch number)
      * @return batchNumber The number of the latest batch
      */
     function getLatestBatchNumber() external view override returns (uint256 batchNumber) {
-        return latestBatchNumber;
+        return highestBatchNumber;
+    }
+    
+    /**
+     * @dev Returns the next available batch number for auto-numbering (first gap)
+     * @return batchNumber The next available batch number
+     */
+    function getNextAutoNumberedBatch() external view returns (uint256 batchNumber) {
+        return firstGapIndex;
     }
 
     /**
@@ -587,7 +744,8 @@ contract AggregatorBatches is IAggregatorBatches {
      * @return hashroot The SMT hashroot of the batch
      */
     function getBatchHashroot(uint256 batchNumber) external view override returns (bytes memory hashroot) {
-        require(batchNumber > 0 && batchNumber <= latestBatchNumber, "Invalid batch number");
+        require(batchNumber > 0 && batchNumber <= highestBatchNumber, "Invalid batch number");
+        require(batches[batchNumber].batchNumber != 0, "Batch does not exist");
 
         return batches[batchNumber].hashroot;
     }
@@ -684,7 +842,8 @@ contract AggregatorBatches is IAggregatorBatches {
         returns (bool success)
     {
         // Basic validation
-        require(batchNumber > 0 && batchNumber <= latestBatchNumber, "Invalid batch number");
+        require(batchNumber > 0 && batchNumber <= highestBatchNumber, "Invalid batch number");
+        require(batches[batchNumber].batchNumber != 0, "Batch does not exist");
         require(!batches[batchNumber].processed, "Batch already processed");
 
         // Ensure batch processing happens sequentially
