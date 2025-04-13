@@ -349,7 +349,7 @@ export class UniCityAnchorClient {
         console.log(`Transaction ${tx.hash} confirmed in block ${receipt.blockNumber}`);
 
         // Look for the event that contains the success count
-        if (method === 'submitCommitments' || method === 'submitAndCreateBatch') {
+        if (method === 'submitCommitments' || method === 'submitAndCreateBatch' || method === 'submitAndCreateBatchWithNumber') {
           // Find the RequestsSubmitted event in the receipt logs
           const iface = new ethers.Interface(this.options.abi || ABI);
           
@@ -376,8 +376,8 @@ export class UniCityAnchorClient {
             }
           }
           
-          // For submitAndCreateBatch we need both successCount and batchNumber
-          if (method === 'submitAndCreateBatch') {
+          // For submitAndCreateBatch or submitAndCreateBatchWithNumber we need both successCount and batchNumber
+          if (method === 'submitAndCreateBatch' || method === 'submitAndCreateBatchWithNumber') {
             return {
               success: true,
               transactionHash: receipt.hash,

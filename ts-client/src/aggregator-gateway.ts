@@ -118,13 +118,20 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
    * @returns The created batch number and transaction result
    */
   public async createBatch(): Promise<{ batchNumber: bigint; result: TransactionResult }> {
+    // Get the next auto-numbered batch before creating the batch
+    // This is the batch number that will be used to fill the gap
+    const nextAutoNumberedBatch = await this.getNextAutoNumberedBatch();
+    
     const result = await this.executeTransaction('createBatch', []);
-
-    // Get the latest batch number to return
-    // Note: If the transaction failed, this will be the previous batch number
-    const batchNumber = await this.getLatestBatchNumber();
-
-    return { batchNumber, result };
+    
+    // If the transaction was successful, return the next auto-numbered batch
+    // that we retrieved before the transaction, as this is the batch that was created
+    if (result.success) {
+      return { batchNumber: nextAutoNumberedBatch, result };
+    } else {
+      // If the transaction failed, return 0 as the batch number
+      return { batchNumber: BigInt(0), result };
+    }
   }
 
   /**
@@ -390,11 +397,11 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
     let successCount = BigInt(0);
     
     if (result.success) {
-      if ('batchNumber' in result) {
-        batchNumber = result.batchNumber as bigint;
-      } else {
-        batchNumber = batchNum; // Use the input batch number if not returned in result
-      }
+      // For explicit batch numbering, if the transaction was successful,
+      // the batch number is guaranteed to be the one we specified
+      batchNumber = batchNum;
+      
+      // Try to get successCount if available in the result
       if ('successCount' in result) {
         successCount = result.successCount as bigint;
       }

@@ -342,18 +342,47 @@ describe('Explicit Batch Numbering Integration Tests', () => {
     expect(lowerBatchInfo.processed).toBe(true);
     
     // Now process any other batches in sequence before our higher batch
-    // Process batch N+2 if it exists
+    
+    // For our test, we'll create a smaller gap to make it easier to test
+    // Modify the test to create a batch with batchNumber = lowerBatch + 1 
+    // instead of a larger gap
+    
+    // Create a middle batch (N+2) to ensure sequential processing
     const middleBatch = lowerBatch + 1n;
+    
     try {
-      const batchInfo = await nodeClient.getBatch(middleBatch);
-      if (batchInfo && batchInfo.requests.length > 0) {
-        console.log(`Processing middle batch ${middleBatch}...`);
-        const middleHashroot = ethers.toUtf8Bytes(`middle batch hashroot`);
-        await nodeClient.submitHashroot(middleBatch, middleHashroot);
-      }
+      // Check if the batch already exists
+      await nodeClient.getBatch(middleBatch);
+      console.log(`Middle batch ${middleBatch} already exists`);
     } catch (error) {
-      console.log(`No middle batch ${middleBatch} to process`);
+      // Batch doesn't exist, create it
+      console.log(`Creating middle batch ${middleBatch}...`);
+      
+      // Create a commitment for this middle batch
+      const middleReqId = BigInt(Date.now() + 10000);
+      const middlePayload = ethers.toUtf8Bytes('middle batch payload');
+      const middleAuth = ethers.toUtf8Bytes('middle batch auth');
+      
+      // Submit and create batch with this explicit number
+      await gatewayClient.submitCommitment(middleReqId, middlePayload, middleAuth);
+      const middleBatchResult = await gatewayClient.createBatchForRequestsWithNumber(
+        [middleReqId],
+        middleBatch
+      );
+      console.log(`Middle batch created: ${middleBatchResult.batchNumber}`);
     }
+    
+    // Process the middle batch
+    console.log(`Processing middle batch ${middleBatch}...`);
+    const middleHashroot = ethers.toUtf8Bytes('middle batch hashroot');
+    const middleResult = await nodeClient.submitHashroot(middleBatch, middleHashroot);
+    
+    console.log(`Middle batch processing result: ${middleResult.success}`);
+    expect(middleResult.success).toBe(true);
+    
+    // Verify that the middle batch is processed
+    const middleBatchInfo = await nodeClient.getBatch(middleBatch);
+    expect(middleBatchInfo.processed).toBe(true);
     
     // Now process the higher batch (should succeed)
     console.log(`Now processing higher batch ${higherBatch}...`);
