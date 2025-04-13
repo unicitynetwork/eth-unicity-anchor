@@ -50,6 +50,8 @@ interface InclusionProof {
   processed: boolean;
   hashroot: string;
   proof: string;
+  isInclusion?: boolean;  // Flag to indicate if this is an inclusion or non-inclusion proof
+  status?: string;        // Status flag for non-inclusion proofs (e.g., 'PENDING', 'NOT_FOUND')
 }
 
 interface ProofResult {
@@ -220,7 +222,7 @@ async function getProof(gatewayUrl: string, requestId: string): Promise<ProofRes
 let verbose = false;
 
 // Verify a proof (either inclusion or non-inclusion)
-function verifyProof(commitment: Commitment, proof: InclusionProof & { isInclusion?: boolean; status?: string }): boolean {
+function verifyProof(commitment: Commitment, proof: InclusionProof): boolean {
   try {
     // Log the full proof for debugging
     if (verbose) {
