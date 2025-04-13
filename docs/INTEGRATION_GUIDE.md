@@ -885,6 +885,55 @@ Key client classes and their methods:
 
 ---
 
+## 9. Swagger Documentation and JSON-RPC API
+
+The Ethereum Unicity Anchor gateway includes interactive Swagger documentation that makes it easier for developers to understand and test the API.
+
+### 9.1 Accessing Swagger Documentation
+
+When running a gateway, the Swagger documentation is available at:
+
+```
+http://{gateway-host}/swagger
+```
+
+For example, if your gateway is running on localhost at port 3000, the Swagger documentation would be available at `http://localhost:3000/swagger`.
+
+### 9.2 Using the Swagger UI
+
+The Swagger UI provides:
+
+1. **Interactive API Documentation**: Comprehensive documentation for all API endpoints
+2. **Request/Response Examples**: Sample payloads and responses for each endpoint
+3. **Try It Out Feature**: Test API calls directly from the browser
+4. **Schema Definitions**: Complete data models used by the API
+
+### 9.3 Running the Swagger Server
+
+You can run the Swagger documentation server independently:
+
+```bash
+# From the ts-client directory
+npm run swagger
+
+# Or specify a custom port
+npm run swagger -- 8080
+```
+
+### 9.4 JSON-RPC API Reference
+
+The gateway's JSON-RPC API provides a standard interface for interacting with the Ethereum Unicity Anchor system. Key endpoints include:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/submitCommitment` | POST | Submit a single commitment |
+| `/submitMultipleCommitments` | POST | Submit multiple commitments in one transaction |
+| `/submitBatch` | POST | Submit commitments and create a batch in one transaction |
+| `/submitBatchWithNumber` | POST | Submit commitments and create a batch with explicit number |
+| `/getInclusionProof/{requestId}` | GET | Get inclusion proof for a commitment |
+
+For comprehensive documentation on the JSON-RPC API, refer to the [Gateway JSON-RPC Guide](GATEWAY_JSON_RPC_GUIDE.md).
+
 ## Conclusion
 
 The Ethereum Unicity Anchor system provides a robust framework for processing commitment requests with guaranteed consistency across multiple trusted aggregators. By following this integration guide, development and QA teams can successfully deploy and maintain production-ready aggregator gateways and nodes.
@@ -896,5 +945,6 @@ For additional information, refer to the following resources:
 - [Specification](SPECIFICATION.md) - Complete technical specification
 - [Testing Guide](TESTING.md) - Comprehensive test procedures
 - [Aggregator Gateway Guide](AGGREGATOR_GATEWAY_GUIDE.md) - Comprehensive guide for using the Aggregator Gateway
+- [Gateway JSON-RPC Guide](GATEWAY_JSON_RPC_GUIDE.md) - Detailed guide for using the JSON-RPC API
 
 For questions, feedback, or support, contact the core development team.

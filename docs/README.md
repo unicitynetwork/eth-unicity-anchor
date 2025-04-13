@@ -16,6 +16,8 @@ Welcome to the documentation for the Ethereum Unicity Anchor system. This direct
 
 - [**Aggregator Gateway Guide**](AGGREGATOR_GATEWAY_GUIDE.md) - Detailed documentation on setting up and using the Aggregator Gateway, with code examples for various use cases.
 
+- [**Gateway JSON-RPC Guide**](GATEWAY_JSON_RPC_GUIDE.md) - Comprehensive guide for working with the Gateway's JSON-RPC API, including Swagger documentation, endpoint references, and code examples.
+
 ## System Overview
 
 The Ethereum Unicity Anchor provides a trustless framework for processing user commitments with guaranteed consistency across all participants. It enables multiple trusted aggregator services to collect, process, and verify commitment requests in an orderly, immutable manner.
@@ -24,9 +26,11 @@ The Ethereum Unicity Anchor provides a trustless framework for processing user c
 
 - **Commitment Management**: Secure submission and validation of user commitments
 - **Batch Processing**: Efficient organization of commitments into sequential batches
+- **Explicit Batch Numbering**: Support for creating batches with specific numbers
 - **Hashroot Consensus**: Multi-aggregator voting system for verification
 - **Sequential Processing**: Strict ordering of batch processing for data consistency
 - **Access Controls**: Only authorized aggregators can submit data or hashroots
+- **Interactive API Documentation**: Swagger UI for exploring and testing the API
 
 ### Core Workflow
 

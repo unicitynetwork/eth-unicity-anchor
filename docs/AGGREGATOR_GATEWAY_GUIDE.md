@@ -114,6 +114,59 @@ if (result.success) {
 }
 ```
 
+## 6. Creating Batches with Explicit Batch Numbers
+
+In some scenarios, you may want to create batches with explicit batch numbers, rather than relying on the auto-numbering feature. This can be useful for:
+
+- Implementing custom batch numbering schemes
+- Creating batches with specific numbers for identification
+- Creating batches in a distributed system with pre-allocated batch numbers
+
+```typescript
+// Create a batch with an explicit batch number
+const explicitBatchNumber = 42n; // Any positive number
+const requestIDs = [1001n, 1002n, 1003n];
+
+const { batchNumber, result } = await gatewayClient.createBatchForRequestsWithNumber(
+  requestIDs,
+  explicitBatchNumber
+);
+
+if (result.success) {
+  console.log(`Batch #${batchNumber} created with explicit number`);
+} else {
+  console.error(`Explicit batch creation failed: ${result.error?.message}`);
+}
+```
+
+You can also submit commitments and create a batch with an explicit number in a single transaction:
+
+```typescript
+// Submit commitments and create a batch with explicit number
+const explicitBatchNumber = 100n;
+
+const { batchNumber, successCount, result } = await gatewayClient.submitAndCreateBatchWithNumber(
+  commitments,
+  explicitBatchNumber
+);
+
+if (result.success) {
+  console.log(`Batch #${batchNumber} created with ${successCount} commitments`);
+} else {
+  console.error(`Operation failed: ${result.error?.message}`);
+}
+```
+
+**Important considerations when using explicit batch numbers:**
+
+1. **Sequential Processing Requirement**: Batches must still be processed in sequential order. Creating a batch with a higher number doesn't allow it to be processed before lower-numbered batches.
+
+2. **Filling Gaps**: When using explicit batch numbers, you may create gaps in the batch sequence. The system supports filling these gaps with auto-numbered batches.
+
+3. **Gap Detection**: The contract maintains a `firstGapIndex` that points to the first gap in the batch sequence. Auto-numbered batches will fill from this index.
+
+4. **Highest Batch Number**: Creating batches with explicit numbers updates the contract's `highestBatchNumber` if the explicit number is higher than the current highest.
+
 ## Advanced Configuration
 
 ### Automatic Batch Creation
