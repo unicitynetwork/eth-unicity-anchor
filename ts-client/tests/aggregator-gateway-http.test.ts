@@ -49,31 +49,9 @@ jest.mock('../src/client', () => {
 });
 
 // Mock the SparseMerkleTree module
-jest.mock('@unicitylabs/commons/src/smt/SparseMerkleTree.js', () => {
-  return {
-    SparseMerkleTree: {
-      create: jest.fn().mockResolvedValue({
-        addLeaf: jest.fn(),
-        rootHash: Buffer.from('mockhashroot', 'utf8'),
-        getPath: jest.fn().mockReturnValue({
-          steps: [
-            { sibling: Buffer.from('sibling1', 'utf8') },
-            { sibling: Buffer.from('sibling2', 'utf8') }
-          ]
-        })
-      })
-    }
-  };
-});
-
-// Mock the HashAlgorithm module
-jest.mock('@unicitylabs/commons/src/hash/HashAlgorithm.js', () => {
-  return {
-    HashAlgorithm: {
-      SHA256: 'sha256'
-    }
-  };
-});
+// Use real SMT implementation instead of mocks
+import { SparseMerkleTree } from '@unicitylabs/commons/lib/smt/SparseMerkleTree.js';
+import { HashAlgorithm } from '@unicitylabs/commons/lib/hash/HashAlgorithm.js';
 
 // Mock the gateway-types
 jest.mock('../src/gateway-types/RequestId', () => {

@@ -2,8 +2,8 @@ import { ethers } from 'ethers';
 import { SMTAggregatorNodeClient } from '../src/aggregator-node-smt';
 import { AggregatorGatewayClient } from '../src/aggregator-gateway';
 import { UniCityAnchorClient } from '../src/client';
-import { SparseMerkleTree } from '@unicitylabs/commons/src/smt/SparseMerkleTree.js';
-import { HashAlgorithm } from '@unicitylabs/commons/src/hash/HashAlgorithm.js';
+import { SparseMerkleTree } from '@unicitylabs/commons/lib/smt/SparseMerkleTree.js';
+import { HashAlgorithm } from '@unicitylabs/commons/lib/hash/HashAlgorithm.js';
 
 // This test demonstrates how the SMT can be used by the aggregator node client
 describe('SMT Aggregator Node Integration', () => {

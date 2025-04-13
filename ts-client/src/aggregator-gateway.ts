@@ -17,8 +17,8 @@ import { Authenticator } from './gateway-types/Authenticator';
 import { Commitment } from './gateway-types/Commitment';
 import { InclusionProof } from './gateway-types/InclusionProof';
 import crypto from 'crypto';
-import { SparseMerkleTree } from '@unicitylabs/commons/src/smt/SparseMerkleTree.js';
-import { HashAlgorithm } from '@unicitylabs/commons/src/hash/HashAlgorithm.js';
+import { SparseMerkleTree } from '@unicitylabs/commons/lib/smt/SparseMerkleTree.js';
+import { HashAlgorithm } from '@unicitylabs/commons/lib/hash/HashAlgorithm.js';
 
 /**
  * Authentication method for submitters

@@ -9,16 +9,30 @@ set -e
 # 1. Starts a local Anvil Ethereum node
 # 2. Compiles and deploys the AggregatorBatches contract
 # 3. Runs the TypeScript client integration tests against the deployed contract
-# 4. Cleans up resources when done or if interrupted
+# 4. Optionally runs the gateway CLI test
+# 5. Cleans up resources when done or if interrupted
+#
+# Usage:
+#   ./scripts/manual-e2e-test.sh [test-type] [gateway-commits]
+#
+# Arguments:
+#   test-type:       Optional. Specify which tests to run: "all" (default), 
+#                    "integration", or "gateway"
+#   gateway-commits: Optional. Number of commits to test in gateway mode (default: 5)
 # -----------------------------------------------------------------------
 
 # Ensure the script exits if any command fails
 set -e
 
+# Process command line arguments
+TEST_TYPE=${1:-"all"}  # Default to all tests if not specified
+GATEWAY_COMMITS=${2:-5}        # Default to 5 gateway commits if not specified
+
 # Initialize the log file for test output
 LOGFILE="e2e-test-output.log"
 echo "============================================" > $LOGFILE
 echo "Integration Test Run - $(date)" >> $LOGFILE
+echo "Test Type: ${TEST_TYPE}" >> $LOGFILE
 echo "============================================" >> $LOGFILE
 
 # Function to log to both console and log file
@@ -32,6 +46,13 @@ if [ "$VERBOSE" = "true" ]; then
   log "Running in verbose mode"
   # Redirect all commands output to log file as well
   exec > >(tee -a $LOGFILE) 2>&1
+fi
+
+# Display test configuration
+log "Test Configuration:"
+log "  Test Type: ${TEST_TYPE}"
+if [ "$TEST_TYPE" == "gateway" ] || [ "$TEST_TYPE" == "all" ]; then
+  log "  Gateway Commits: ${GATEWAY_COMMITS}"
 fi
 
 # Log system information
@@ -325,120 +346,174 @@ while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
   fi
 done
 
-# Run the integration tests with the contract address
-log "Running integration tests..."
-cd ts-client
-log "Contract address for tests: $CONTRACT_ADDRESS"
+# Initialize variables for test results
+FINAL_EXIT_CODE=0
+TEST_EXIT_CODE=0
+GATEWAY_TEST_EXIT_CODE=0
 
-# Create integration test log file
-INTEGRATION_LOG="integration-test.log"
-log "Integration test output will be written to $INTEGRATION_LOG"
+# Function to run integration tests
+run_integration_tests() {
+  log "Running integration tests..."
+  cd ts-client
+  log "Contract address for tests: $CONTRACT_ADDRESS"
 
-# Run tests with additional logging
-log "Starting integration tests with timeout of 120 seconds..."
-# Temporarily disable set -e to prevent script from exiting when tests fail
-set +e
-CONTRACT_ADDRESS=$CONTRACT_ADDRESS FORCE_COLOR=0 npm run test:integration -- --verbose --forceExit --testTimeout=120000 > $INTEGRATION_LOG 2>&1
-TEST_EXIT_CODE=$?
-# Re-enable set -e
-set -e
+  # Create integration test log file
+  INTEGRATION_LOG="integration-test.log"
+  log "Integration test output will be written to $INTEGRATION_LOG"
 
-# Immediately display the test result to the console
-echo -e "\n--------- TEST RESULTS (exit code: $TEST_EXIT_CODE) ---------"
-if grep -q "FAIL" "$INTEGRATION_LOG"; then
-  echo -e "\n❌ TEST FAILURES DETECTED!\n"
-  grep -A10 "FAIL" "$INTEGRATION_LOG" | head -20
-  echo -e "\n"
-  grep -A5 "● End-to-End Integration Tests" "$INTEGRATION_LOG" | head -10
-  echo -e "\nSee $INTEGRATION_LOG for full details"
-  TEST_EXIT_CODE=1
-elif grep -q "Test Suites: .* failed" "$INTEGRATION_LOG"; then
-  echo -e "\n❌ TEST SUITES FAILED!\n"
-  grep -A5 "Test Suites:" "$INTEGRATION_LOG"
-  echo -e "\nSee $INTEGRATION_LOG for full details"
-  TEST_EXIT_CODE=1
-else
-  echo -e "\n✅ ALL TESTS PASSED\n"
-  grep -A3 "Test Suites:" "$INTEGRATION_LOG" || echo "No test summary found"
-fi
-echo -e "---------------------------------------------------\n"
+  # Run tests with additional logging
+  log "Starting integration tests with timeout of 120 seconds..."
+  # Temporarily disable set -e to prevent script from exiting when tests fail
+  set +e
+  CONTRACT_ADDRESS=$CONTRACT_ADDRESS FORCE_COLOR=0 npm run test:integration -- --verbose --forceExit --testTimeout=120000 > $INTEGRATION_LOG 2>&1
+  TEST_EXIT_CODE=$?
+  # Re-enable set -e
+  set -e
 
-# Check if anything was written to the log
-if [ ! -s "$INTEGRATION_LOG" ]; then
-  log "⚠️ Warning: Integration test output log is empty!"
-  log "Current directory: $(pwd)"
-  log "Integration test command exists: $(npm run | grep test:integration || echo 'NOT FOUND')"
-  log "Checking Jest integration config..."
-  cat jest.integration.config.js >> ../$LOGFILE
-fi
-
-# Check for test failures in logs
-if grep -q "FAIL " "$INTEGRATION_LOG" || grep -q "Test Suites:.*[1-9][0-9]* failed" "$INTEGRATION_LOG" || grep -q "Tests:.*[1-9][0-9]* failed" "$INTEGRATION_LOG"; then
-  # Output directly to console for visibility
-  echo "❌ TEST FAILURES DETECTED! Full test log is being captured."
-  
-  # Add to log file
-  log "❌ TEST FAILURES DETECTED! Full test log:"
-  
-  # Output summary to console
-  echo "Test failure summary:"
-  grep -A10 "FAIL " "$INTEGRATION_LOG" | head -10
-  
-  # Always output full log on failure
-  cat "$INTEGRATION_LOG" >> ../$LOGFILE
-  
-  # Set exit code to fail
-  TEST_EXIT_CODE=1
-else
-  # No failures detected in the logs, show summary
-  log "Integration test output summary (see $INTEGRATION_LOG for details):"
-  grep -E "(PASS|✓)" $INTEGRATION_LOG | tail -5 >> ../$LOGFILE
-  grep -A3 "Test Suites:" "$INTEGRATION_LOG" >> ../$LOGFILE 2>/dev/null
-  
-  # If no match was found, show the last 20 lines
-  if [ $? -ne 0 ]; then
-    log "No test results found in log, showing last 20 lines:"
-    tail -20 $INTEGRATION_LOG >> ../$LOGFILE
+  # Immediately display the test result to the console
+  echo -e "\n--------- INTEGRATION TEST RESULTS (exit code: $TEST_EXIT_CODE) ---------"
+  if grep -q "FAIL" "$INTEGRATION_LOG"; then
+    echo -e "\n❌ TEST FAILURES DETECTED!\n"
+    grep -A10 "FAIL" "$INTEGRATION_LOG" | head -20
+    echo -e "\n"
+    grep -A5 "● End-to-End Integration Tests" "$INTEGRATION_LOG" | head -10
+    echo -e "\nSee $INTEGRATION_LOG for full details"
+    TEST_EXIT_CODE=1
+  elif grep -q "Test Suites: .* failed" "$INTEGRATION_LOG"; then
+    echo -e "\n❌ TEST SUITES FAILED!\n"
+    grep -A5 "Test Suites:" "$INTEGRATION_LOG"
+    echo -e "\nSee $INTEGRATION_LOG for full details"
+    TEST_EXIT_CODE=1
+  else
+    echo -e "\n✅ ALL INTEGRATION TESTS PASSED\n"
+    grep -A3 "Test Suites:" "$INTEGRATION_LOG" || echo "No test summary found"
   fi
-fi
+  echo -e "-----------------------------------------------------------\n"
 
-# Set final exit code based on test output
-if [ $TEST_EXIT_CODE -ne 0 ] || grep -q "FAIL" "$INTEGRATION_LOG" || grep -q "Test Suites:.*[1-9][0-9]* failed" "$INTEGRATION_LOG" || grep -q "Tests:.*[1-9][0-9]* failed" "$INTEGRATION_LOG"; then
-  # Direct console output for better visibility
-  echo -e "\n❌ TESTS FAILED! Check the logs for details."
-  
-  # Log to file
-  log "❌ Integration tests failed!"
-  
-  # Extract the number of failed tests for better reporting
-  FAILED_TESTS=$(grep -o "Tests:.*[1-9][0-9]* failed" "$INTEGRATION_LOG" | grep -o "[1-9][0-9]* failed" || echo "Unknown failures")
-  
-  # Write to both console and log
-  echo "Test failures detected: $FAILED_TESTS"
-  log "Test failures detected: $FAILED_TESTS"
-  
-  # Extract specific test failures for reporting and display to console
-  echo -e "\nFailed test details:"
-  grep -B1 -A5 "● .* ›" "$INTEGRATION_LOG" | grep -v "^--$" | tee -a ../$LOGFILE
-  
-  echo -e "\nNode.js and network diagnostics:"
-  log "Node.js and network diagnostics:"
-  echo "  - Node version: $(node --version)"
-  echo "  - NPM version: $(npm --version)"
-  
-  # Set exit code but continue, so cleanup will run
-  FINAL_EXIT_CODE=1
-else
-  # Direct console output
-  echo -e "\n✅ ALL TESTS PASSED SUCCESSFULLY!"
-  
-  # Log to file
-  log "✅ Integration tests completed successfully!"
-  FINAL_EXIT_CODE=0
-fi
+  # Check if anything was written to the log
+  if [ ! -s "$INTEGRATION_LOG" ]; then
+    log "⚠️ Warning: Integration test output log is empty!"
+    log "Current directory: $(pwd)"
+    log "Integration test command exists: $(npm run | grep test:integration || echo 'NOT FOUND')"
+    log "Checking Jest integration config..."
+    cat jest.integration.config.js >> ../$LOGFILE
+  fi
 
-# Return to root directory
-cd ..
+  # Check for test failures in logs
+  if grep -q "FAIL " "$INTEGRATION_LOG" || grep -q "Test Suites:.*[1-9][0-9]* failed" "$INTEGRATION_LOG" || grep -q "Tests:.*[1-9][0-9]* failed" "$INTEGRATION_LOG"; then
+    # Output directly to console for visibility
+    echo "❌ INTEGRATION TEST FAILURES DETECTED! Full test log is being captured."
+    
+    # Add to log file
+    log "❌ INTEGRATION TEST FAILURES DETECTED! Full test log:"
+    
+    # Output summary to console
+    echo "Test failure summary:"
+    grep -A10 "FAIL " "$INTEGRATION_LOG" | head -10
+    
+    # Always output full log on failure
+    cat "$INTEGRATION_LOG" >> ../$LOGFILE
+    
+    # Set exit code to fail
+    TEST_EXIT_CODE=1
+  else
+    # No failures detected in the logs, show summary
+    log "Integration test output summary (see $INTEGRATION_LOG for details):"
+    grep -E "(PASS|✓)" $INTEGRATION_LOG | tail -5 >> ../$LOGFILE
+    grep -A3 "Test Suites:" "$INTEGRATION_LOG" >> ../$LOGFILE 2>/dev/null
+    
+    # If no match was found, show the last 20 lines
+    if [ $? -ne 0 ]; then
+      log "No test results found in log, showing last 20 lines:"
+      tail -20 $INTEGRATION_LOG >> ../$LOGFILE
+    fi
+  fi
+
+  cd ..
+  return $TEST_EXIT_CODE
+}
+
+# Function to run gateway tests
+run_gateway_tests() {
+  log "Running gateway tests with $GATEWAY_COMMITS commits..."
+  cd ts-client
+  
+  # Create gateway test log file
+  GATEWAY_LOG="gateway-test.log"
+  log "Gateway test output will be written to $GATEWAY_LOG"
+
+  # Create a gateway server and run the tests
+  log "Starting gateway server and running tests..."
+  set +e
+  
+  # Check if ts-node is installed and available
+  if ! npx --no-install ts-node --version > /dev/null 2>&1; then
+    log "ts-node is not installed or not available. Installing it now..."
+    npm install --save-dev ts-node
+  fi
+  
+  # Run the gateway test with ts-node
+  log "Running gateway test with real SMT implementation"
+  CONTRACT_ADDRESS=$CONTRACT_ADDRESS npx ts-node src/run-gateway-test.ts 0 $GATEWAY_COMMITS > $GATEWAY_LOG 2>&1
+  GATEWAY_TEST_EXIT_CODE=$?
+  set -e
+
+  # Display the gateway test results
+  echo -e "\n--------- GATEWAY TEST RESULTS (exit code: $GATEWAY_TEST_EXIT_CODE) ---------"
+  if [ $GATEWAY_TEST_EXIT_CODE -ne 0 ]; then
+    echo -e "\n❌ GATEWAY TEST FAILED!\n"
+    tail -20 $GATEWAY_LOG
+    echo -e "\nSee $GATEWAY_LOG for full details"
+  else
+    echo -e "\n✅ GATEWAY TEST PASSED\n"
+    grep -E "(SUCCESS|✓|Completed)" $GATEWAY_LOG | tail -5
+  fi
+  echo -e "-----------------------------------------------------------\n"
+
+  # If the log file exists, add results to the main log
+  if [ -f "$GATEWAY_LOG" ]; then
+    log "Gateway test output summary:"
+    tail -20 $GATEWAY_LOG >> ../$LOGFILE
+  else
+    log "⚠️ Warning: Gateway test output log is empty or missing!"
+  fi
+
+  cd ..
+  return $GATEWAY_TEST_EXIT_CODE
+}
+
+# Run tests based on the test type
+case "$TEST_TYPE" in
+  "integration")
+    log "Running integration tests only"
+    run_integration_tests
+    FINAL_EXIT_CODE=$TEST_EXIT_CODE
+    ;;
+  "gateway")
+    log "Running gateway tests only"
+    run_gateway_tests
+    FINAL_EXIT_CODE=$GATEWAY_TEST_EXIT_CODE
+    ;;
+  "all")
+    log "Running all tests: integration and gateway tests"
+    run_integration_tests
+    INTEGRATION_RESULT=$?
+    
+    run_gateway_tests
+    GATEWAY_RESULT=$?
+    
+    # Set the final exit code to fail if either test failed
+    if [ $INTEGRATION_RESULT -ne 0 ] || [ $GATEWAY_RESULT -ne 0 ]; then
+      FINAL_EXIT_CODE=1
+    else
+      FINAL_EXIT_CODE=0
+    fi
+    ;;
+  *)
+    log "ERROR: Invalid test type: $TEST_TYPE. Valid options are 'integration', 'gateway', or 'all'"
+    exit 1
+    ;;
+esac
 
 # Make sure the exit code is properly set and returned
 if [ "$FINAL_EXIT_CODE" -ne 0 ]; then

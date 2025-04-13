@@ -1,7 +1,7 @@
 import { ethers } from 'ethers';
 import { AggregatorNodeClient } from './aggregator-node';
-import { SparseMerkleTree } from '@unicitylabs/commons/src/smt/SparseMerkleTree.js';
-import { HashAlgorithm } from '@unicitylabs/commons/src/hash/HashAlgorithm.js';
+import { SparseMerkleTree } from '@unicitylabs/commons/lib/smt/SparseMerkleTree.js';
+import { HashAlgorithm } from '@unicitylabs/commons/lib/hash/HashAlgorithm.js';
 import { ClientOptions, TransactionResult, AggregatorConfig } from './types';
 
 /**
