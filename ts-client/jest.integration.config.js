@@ -17,6 +17,19 @@ module.exports = {
   maxWorkers: 1,
   // Allow more time for cleanup
   forceExit: true,
-  // Retry failed tests
-  retryTimes: 1
+  // Override transform configuration for integration tests
+  transform: {
+    '^.+\\.tsx?$': ['ts-jest', {
+      tsconfig: 'tsconfig.json',
+      // Use 'esm' module support for newer ES modules
+      useESM: false,
+    }],
+  },
+  // Make sure to process node_modules in integration tests if needed
+  transformIgnorePatterns: [
+    "node_modules/(?!(@unicitylabs))"
+  ],
+  
+  // Allow for virtual mocking with jest.mock
+  moduleDirectories: ["node_modules"]
 };

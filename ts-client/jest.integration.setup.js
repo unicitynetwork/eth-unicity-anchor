@@ -6,7 +6,7 @@ const path = require('path');
 
 // Mock the SparseMerkleTree and HashAlgorithm from @unicitylabs/commons for integration tests
 // This is an enhanced simulation that maintains an actual tree structure and calculates real hashroots
-jest.mock('@unicitylabs/commons/src/smt/SparseMerkleTree.js', () => {
+jest.mock('@unicitylabs/commons/lib/smt/SparseMerkleTree.js', () => {
   const crypto = require('crypto');
   
   // Simple hash function for SMT simulation
@@ -153,7 +153,7 @@ jest.mock('@unicitylabs/commons/src/smt/SparseMerkleTree.js', () => {
   };
 }, { virtual: true });
 
-jest.mock('@unicitylabs/commons/src/hash/HashAlgorithm.js', () => {
+jest.mock('@unicitylabs/commons/lib/hash/HashAlgorithm.js', () => {
   return {
     HashAlgorithm: {
       SHA256: 0,

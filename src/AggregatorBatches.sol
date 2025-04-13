@@ -350,12 +350,15 @@ contract AggregatorBatches is IAggregatorBatches {
         //        require(requestIDs.length > 0, "No request IDs provided");
         if (requestIDs.length == 0) return 0;
 
-        // Filter only existing unprocessed requests
+        // Filter only existing unprocessed requests that haven't been added to a batch yet
         uint256[] memory filteredRequestIDs = new uint256[](requestIDs.length);
         uint256 filteredCount = 0;
 
         for (uint256 i = 0; i < requestIDs.length; i++) {
-            if (unprocessedRequestIds.contains(requestIDs[i])) {
+            // Double-check both that the request is in the unprocessed pool AND not already in a batch
+            // This provides extra protection against edge cases where a request might still be in the 
+            // unprocessed pool even though it's been added to a batch
+            if (unprocessedRequestIds.contains(requestIDs[i]) && !requestAddedToBatch[requestIDs[i]]) {
                 filteredRequestIDs[filteredCount] = requestIDs[i];
                 filteredCount++;
             }
@@ -386,12 +389,15 @@ contract AggregatorBatches is IAggregatorBatches {
         if (requestIDs.length == 0) return 0;
         require(explicitBatchNumber > 0, "Batch number must be greater than 0");
 
-        // Filter only existing unprocessed requests
+        // Filter only existing unprocessed requests that haven't been added to a batch yet
         uint256[] memory filteredRequestIDs = new uint256[](requestIDs.length);
         uint256 filteredCount = 0;
 
         for (uint256 i = 0; i < requestIDs.length; i++) {
-            if (unprocessedRequestIds.contains(requestIDs[i])) {
+            // Double-check both that the request is in the unprocessed pool AND not already in a batch
+            // This provides extra protection against edge cases where a request might still be in the 
+            // unprocessed pool even though it's been added to a batch
+            if (unprocessedRequestIds.contains(requestIDs[i]) && !requestAddedToBatch[requestIDs[i]]) {
                 filteredRequestIDs[filteredCount] = requestIDs[i];
                 filteredCount++;
             }
