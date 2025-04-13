@@ -145,15 +145,69 @@ async function submitCommitment(gatewayUrl: string, commitment: Commitment): Pro
   }
 }
 
-// Get inclusion proof for a request ID
-async function getInclusionProof(gatewayUrl: string, requestId: string): Promise<ProofResult> {
+// Get inclusion or non-inclusion proof for a request ID
+async function getProof(gatewayUrl: string, requestId: string): Promise<ProofResult> {
   try {
+    // Get the proof from the gateway
     const response = await axios.get(`${gatewayUrl}/getInclusionProof/${requestId}`);
+    
+    // Check if this is a non-inclusion proof (PENDING status)
+    if (response.status === 202 && response.data.status === 'PENDING') {
+      if (verbose) console.log(`Received PENDING status - commitment exists but not yet included in a processed batch`);
+      
+      return {
+        success: true,
+        proof: {
+          requestId,
+          batchNumber: response.data.batchNumber || '0',
+          processed: false,
+          hashroot: '0x0000000000000000000000000000000000000000000000000000000000000000',
+          proof: '0x0000',
+          status: 'PENDING',
+          isInclusion: false
+        }
+      };
+    }
+    
+    // Check if it's a full inclusion proof
+    if (response.status === 200) {
+      if (verbose) console.log(`Received inclusion proof for request ${requestId}`);
+      
+      // Add a flag to indicate this is an inclusion proof
+      return {
+        success: true,
+        proof: {
+          ...response.data,
+          isInclusion: true
+        }
+      };
+    }
+    
+    // Fallback case - return whatever we got
     return {
       success: true,
       proof: response.data
     };
   } catch (error: any) {
+    if (error.response?.status === 404) {
+      if (verbose) console.log(`Request ${requestId} not found`);
+      
+      // This is a proper "not found" response - create a non-inclusion proof
+      return {
+        success: true,
+        proof: {
+          requestId,
+          batchNumber: '0',
+          processed: false,
+          hashroot: '0x0000000000000000000000000000000000000000000000000000000000000000',
+          proof: '0x0000',
+          status: 'NOT_FOUND',
+          isInclusion: false
+        }
+      };
+    }
+    
+    // Any other error
     return {
       success: false,
       error: error.message,
@@ -165,8 +219,8 @@ async function getInclusionProof(gatewayUrl: string, requestId: string): Promise
 // Global variable for verbosity
 let verbose = false;
 
-// Verify an inclusion proof
-function verifyProof(commitment: Commitment, proof: InclusionProof): boolean {
+// Verify a proof (either inclusion or non-inclusion)
+function verifyProof(commitment: Commitment, proof: InclusionProof & { isInclusion?: boolean; status?: string }): boolean {
   try {
     // Log the full proof for debugging
     if (verbose) {
@@ -175,12 +229,11 @@ function verifyProof(commitment: Commitment, proof: InclusionProof): boolean {
     }
     
     if (!proof) {
-      console.log('Proof object is null or undefined');
+      console.log('❌ Proof object is null or undefined');
       return false;
     }
     
-    // For basic verification, we check:
-    // 1. The requestId matches
+    // 1. The requestId matches in all cases
     if (commitment.requestId !== proof.requestId) {
       console.log('❌ Request ID mismatch');
       console.log(`- Expected: ${commitment.requestId}`);
@@ -189,6 +242,32 @@ function verifyProof(commitment: Commitment, proof: InclusionProof): boolean {
     } else {
       console.log('✅ Request ID matches');
     }
+    
+    // Check if this is a non-inclusion proof
+    if (proof.isInclusion === false || proof.status === 'PENDING' || proof.status === 'NOT_FOUND') {
+      console.log('ℹ️ This is a non-inclusion proof');
+      
+      // For non-inclusion proofs, we verify differently
+      if (proof.status === 'PENDING') {
+        console.log('ℹ️ Commitment exists but is not yet in a processed batch');
+        // This is a valid non-inclusion state - the request exists but isn't in a batch yet
+        // In a full implementation, we would check additional fields here
+        return false; // Non-inclusion proofs return false so we keep polling
+      }
+      
+      if (proof.status === 'NOT_FOUND') {
+        console.log('ℹ️ Commitment does not exist');
+        // This is an error - our commitment should exist
+        return false;
+      }
+      
+      // Generic non-inclusion proof handling
+      console.log('ℹ️ Commitment is not included in the SMT tree');
+      return false; // Non-inclusion proofs return false so we keep polling
+    }
+    
+    // This is an inclusion proof - continue with regular verification
+    console.log('ℹ️ This is an inclusion proof');
     
     // 2. Verify the batch number exists
     if (!proof.batchNumber) {
@@ -250,6 +329,7 @@ interface CommandLineOptions {
   commitCount: number;
   pollingAttempts: number;
   pollingInterval: number;
+  maxTimeout: number;  // Maximum timeout in seconds
   verbose: boolean;
 }
 
@@ -266,8 +346,9 @@ Arguments:
 
 Options:
   --count, -c N           Number of commitments to send (default: 1)
-  --attempts, -a N        Maximum polling attempts (default: 12)
-  --interval, -i N        Polling interval in seconds (default: 5)
+  --attempts, -a N        Maximum polling attempts (default: 20)
+  --interval, -i N        Polling interval in seconds (default: 2)
+  --timeout, -t N         Maximum total polling time in seconds (default: 120)
   --verbose, -v           Enable verbose output
   --help, -h              Show this help message
 `);
@@ -280,6 +361,7 @@ Options:
     commitCount: 1,
     pollingAttempts: 20, // More attempts
     pollingInterval: 2,  // Shorter interval (seconds)
+    maxTimeout: 120,     // Default timeout of 120 seconds
     verbose: false
   };
   
@@ -295,6 +377,8 @@ Options:
       options.pollingInterval = parseInt(args[++i]);
     } else if (arg === '--verbose' || arg === '-v') {
       options.verbose = true;
+    } else if (arg === '--timeout' || arg === '-t') {
+      options.maxTimeout = parseInt(args[++i]);
     } else if (arg === '--help' || arg === '-h') {
       console.error(`
 Usage: npx ts-node src/test-gateway.ts <gateway-url> [options]
@@ -304,8 +388,9 @@ Arguments:
 
 Options:
   --count, -c N           Number of commitments to send (default: 1)
-  --attempts, -a N        Maximum polling attempts (default: 12)
-  --interval, -i N        Polling interval in seconds (default: 5)
+  --attempts, -a N        Maximum polling attempts (default: 20)
+  --interval, -i N        Polling interval in seconds (default: 2)
+  --timeout, -t N         Maximum total polling time in seconds (default: 120)
   --verbose, -v           Enable verbose output
   --help, -h              Show this help message
 `);
@@ -328,6 +413,11 @@ Options:
     process.exit(1);
   }
   
+  if (isNaN(options.maxTimeout) || options.maxTimeout < 1) {
+    console.error('Error: max timeout must be a positive integer');
+    process.exit(1);
+  }
+  
   return options;
 }
 
@@ -345,6 +435,7 @@ async function main(): Promise<void> {
   console.log(`Commit Count: ${commitCount}`);
   console.log(`Polling Attempts: ${pollingAttempts}`);
   console.log(`Polling Interval: ${pollingInterval} seconds`);
+  console.log(`Max Timeout: ${options.maxTimeout} seconds`);
   console.log(`Verbose Mode: ${verbose ? 'Enabled' : 'Disabled'}`);
   console.log(`Timestamp: ${new Date().toISOString()}`);
   console.log(`===========================================\n`);
@@ -411,16 +502,39 @@ async function main(): Promise<void> {
   // Convert polling interval from seconds to milliseconds
   const pollingIntervalMs = pollingInterval * 1000;
   
-  for (let attempt = 1; attempt <= pollingAttempts; attempt++) {
-    console.log(`\nPolling attempt ${attempt}/${pollingAttempts}...`);
+  // Calculate timeout in milliseconds
+  const maxTimeout = options.maxTimeout || 120; // Default 120 seconds
+  const timeoutMs = maxTimeout * 1000;
+  const startTime = Date.now();
+  
+  console.log(`\n=== Starting proof polling (max ${maxTimeout} seconds) ===`);
+  
+  let attempt = 1;
+  let keepPolling = true;
+  
+  while (keepPolling) {
+    // Check if we've hit the timeout
+    const elapsedMs = Date.now() - startTime;
+    const remainingMs = timeoutMs - elapsedMs;
+    
+    if (remainingMs <= 0) {
+      console.log(`\n⚠️ Polling timeout of ${maxTimeout} seconds reached!`);
+      break;
+    }
+    
+    const elapsedSec = Math.floor(elapsedMs / 1000);
+    const remainingSec = Math.floor(remainingMs / 1000);
+    
+    console.log(`\nPolling attempt ${attempt} (${elapsedSec}s elapsed, ${remainingSec}s remaining)...`);
     
     let allProofsFound = true;
+    let allProofsVerified = true;
     let newProofsFound = false;
     
     // Check for proofs for all pending commitments
     for (const submission of submissions) {
       // Skip if we already found and verified the proof
-      if (submission.proofFound) {
+      if (submission.proofFound && submission.proofVerified) {
         continue;
       }
       
@@ -428,18 +542,38 @@ async function main(): Promise<void> {
       
       // Only check for proof if the submission was successful
       if (submission.submissionResult.success) {
-        const proofResult = await getInclusionProof(gatewayUrl, submission.commitment.requestId);
+        const proofResult = await getProof(gatewayUrl, submission.commitment.requestId);
         
         if (proofResult.success && proofResult.proof) {
-          submission.proofFound = true;
+          // Always update with the latest proof
           submission.proof = proofResult.proof;
           submission.proofResult = proofResult;
           
-          console.log(`✅ Proof found in batch #${proofResult.proof.batchNumber}`);
+          // Check if this is an inclusion proof or non-inclusion proof
+          const isInclusion = proofResult.proof.isInclusion === true;
           
-          if (verbose) {
-            console.log(`  - Hashroot: ${proofResult.proof.hashroot ? proofResult.proof.hashroot.substring(0, 10) + '...' : 'undefined'}`);
-            console.log(`  - Proof length: ${proofResult.proof.proof ? proofResult.proof.proof.length : 'undefined'}`);
+          if (isInclusion) {
+            submission.proofFound = true;
+            console.log(`✅ Inclusion proof found in batch #${proofResult.proof.batchNumber}`);
+            
+            if (verbose) {
+              console.log(`  - Hashroot: ${proofResult.proof.hashroot ? proofResult.proof.hashroot.substring(0, 10) + '...' : 'undefined'}`);
+              console.log(`  - Proof length: ${proofResult.proof.proof ? proofResult.proof.proof.length : 'undefined'}`);
+            }
+          } else {
+            // This is a non-inclusion proof
+            submission.proofFound = false; // We want to keep polling
+            
+            if (proofResult.proof.status === 'PENDING') {
+              console.log(`⏳ Commitment found but not yet in a processed batch`);
+              if (proofResult.proof.batchNumber && proofResult.proof.batchNumber !== '0') {
+                console.log(`  - Waiting for batch #${proofResult.proof.batchNumber} to be processed`);
+              }
+            } else if (proofResult.proof.status === 'NOT_FOUND') {
+              console.log(`❌ Commitment not found on gateway`);
+            } else {
+              console.log(`⏳ Non-inclusion proof received, waiting for inclusion...`);
+            }
           }
           
           // Verify the proof
@@ -448,21 +582,22 @@ async function main(): Promise<void> {
           
           if (verified) {
             console.log(`✅ Proof verification successful`);
+            newProofsFound = true;
           } else {
-            console.log(`❌ Proof verification failed`);
+            console.log(`⏳ Proof verification pending - waiting for inclusion`);
+            allProofsVerified = false;
             
-            // Log more details for debugging
+            // Add details for non-inclusion or failed verification
             if (verbose) {
               console.log(`  - Commitment request ID: ${submission.commitment.requestId}`);
-              console.log(`  - Proof request ID: ${proofResult.proof.requestId}`);
-              console.log(`  - Processed: ${proofResult.proof.processed}`);
+              console.log(`  - Proof status: ${proofResult.proof.status || 'Unknown'}`);
+              console.log(`  - Is inclusion proof: ${isInclusion}`);
             }
           }
-          
-          newProofsFound = true;
         } else {
           console.log(`❌ No proof found yet`);
           allProofsFound = false;
+          allProofsVerified = false;
         }
       } else {
         // For failed submissions, we don't expect to find proofs
@@ -470,23 +605,28 @@ async function main(): Promise<void> {
       }
     }
     
-    // If we found all proofs, no need to continue polling
-    if (allProofsFound) {
+    // If we found and verified all proofs, no need to continue polling
+    if (allProofsFound && allProofsVerified) {
       console.log('\n✅ All proofs found and verified!');
       break;
     }
     
     // If we found new proofs in this attempt but not all, wait for next attempt
     if (newProofsFound) {
-      console.log(`\n⏳ Found some new proofs, continuing to poll for remaining...`);
+      console.log(`\n⏳ Found some verified proofs, continuing to poll for remaining...`);
     } else {
-      console.log(`\n⏳ No new proofs found in this attempt, waiting for next poll...`);
+      console.log(`\n⏳ No verified proofs found in this attempt, waiting for next poll...`);
     }
     
-    // If this is not the last attempt, wait before trying again
-    if (attempt < pollingAttempts) {
-      console.log(`Waiting ${pollingInterval} seconds before next attempt...`);
-      await sleep(pollingIntervalMs);
+    // Wait before trying again
+    const nextInterval = Math.min(pollingIntervalMs, remainingMs);
+    if (nextInterval > 0) {
+      const waitSeconds = Math.ceil(nextInterval / 1000);
+      console.log(`Waiting ${waitSeconds} seconds before next attempt...`);
+      await sleep(nextInterval);
+      attempt++;
+    } else {
+      keepPolling = false;
     }
   }
   
@@ -574,8 +714,28 @@ async function main(): Promise<void> {
     console.error(`\nError saving test results: ${error}`);
   }
   
-  // Exit with error code if any commitments failed, are still pending, or proof verification failed
-  process.exit(failedSubmissions > 0 || pendingCommitments > 0 || failedVerifications > 0 ? 1 : 0);
+  // Calculate an exit code based on the results
+  let exitCode = 0;
+  
+  if (failedSubmissions > 0) {
+    console.log('⚠️ Some submissions failed');
+    exitCode = 1;
+  }
+  
+  if (pendingCommitments > 0) {
+    console.log('⚠️ Some commitments are still pending');
+    exitCode = 2;
+  }
+  
+  if (failedVerifications > 0) {
+    console.log('⚠️ Some proof verifications failed');
+    exitCode = 3;
+  }
+  
+  console.log(`Exiting with code ${exitCode} (0 = success, 1 = submission failures, 2 = pending commitments, 3 = verification failures)`);
+  
+  // Exit with the appropriate code
+  process.exit(exitCode);
 }
 
 // Run the main function

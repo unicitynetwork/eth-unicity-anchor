@@ -411,7 +411,12 @@ async function runTest() {
     
     // Run the test script against the server
     console.log(`Running test script with ${commitCount} commits...`);
-    testerProcess = spawn('npx', ['ts-node', 'src/test-gateway.ts', `http://localhost:${serverPort}`, commitCount.toString()], {
+    testerProcess = spawn('npx', ['ts-node', 'src/test-gateway.ts', 
+      `http://localhost:${serverPort}`, 
+      '--count', commitCount.toString(),
+      '--timeout', '30', // Use 30 second timeout for initial run
+      '--interval', '2'  // Use 2 second polling interval
+    ], {
       stdio: 'inherit'
     });
     
@@ -424,9 +429,17 @@ async function runTest() {
     
     console.log(`Test script exited with code ${exitCode}`);
     
-    // If the test failed or found pending proofs, process batches and try again
-    if (exitCode !== 0) {
+    // Handle different exit codes
+    if (exitCode === 0) {
+      console.log('Test completed successfully!');
+      process.exit(0);
+    } else if (exitCode === 1) {
+      console.log('Test failed: Some submissions failed');
+      process.exit(exitCode);
+    } else if (exitCode === 2) {
       console.log('Test found pending commits. Processing batches...');
+    } else if (exitCode === 3) {
+      console.log('Test failed: Some proof verifications failed. Processing batches...');
       
       // Create and process batches
       try {
@@ -479,9 +492,14 @@ async function runTest() {
         console.log('Waiting for processing to settle...');
         await new Promise(resolve => setTimeout(resolve, 2000));
         
-        // Run the test again
+        // Run the test again with a longer timeout
         console.log('Running test script again to verify proofs...');
-        const retestProcess = spawn('npx', ['ts-node', 'src/test-gateway.ts', `http://localhost:${serverPort}`, commitCount.toString()], {
+        const retestProcess = spawn('npx', ['ts-node', 'src/test-gateway.ts', 
+          `http://localhost:${serverPort}`, 
+          '--count', commitCount.toString(),
+          '--timeout', '60', // Use a longer timeout for verification
+          '--verbose'         // Enable verbose mode for better debugging
+        ], {
           stdio: 'inherit'
         });
         
