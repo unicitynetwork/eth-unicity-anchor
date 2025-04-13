@@ -162,6 +162,9 @@ async function getInclusionProof(gatewayUrl: string, requestId: string): Promise
   }
 }
 
+// Global variable for verbosity
+let verbose = false;
+
 // Verify an inclusion proof
 function verifyProof(commitment: Commitment, proof: InclusionProof): boolean {
   try {
@@ -305,7 +308,10 @@ Options:
 async function main(): Promise<void> {
   // Parse command line arguments
   const options = parseCommandLineArgs();
-  const { gatewayUrl, commitCount, pollingAttempts, pollingInterval, verbose } = options;
+  const { gatewayUrl, commitCount, pollingAttempts, pollingInterval } = options;
+  
+  // Set global verbose flag
+  verbose = options.verbose;
   
   console.log(`\n=== ETHEREUM UNICITY ANCHOR GATEWAY TEST ===`);
   console.log(`Gateway URL: ${gatewayUrl}`);
