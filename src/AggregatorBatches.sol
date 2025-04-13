@@ -350,25 +350,8 @@ contract AggregatorBatches is IAggregatorBatches {
         //        require(requestIDs.length > 0, "No request IDs provided");
         if (requestIDs.length == 0) return 0;
 
-        // Filter only existing unprocessed requests that haven't been added to a batch yet
-        uint256[] memory filteredRequestIDs = new uint256[](requestIDs.length);
-        uint256 filteredCount = 0;
-
-        for (uint256 i = 0; i < requestIDs.length; i++) {
-            // Double-check both that the request is in the unprocessed pool AND not already in a batch
-            // This provides extra protection against edge cases where a request might still be in the 
-            // unprocessed pool even though it's been added to a batch
-            if (unprocessedRequestIds.contains(requestIDs[i]) && !requestAddedToBatch[requestIDs[i]]) {
-                filteredRequestIDs[filteredCount] = requestIDs[i];
-                filteredCount++;
-            }
-        }
-
-        // Create a properly sized array with only valid IDs
-        uint256[] memory validRequestIDs = new uint256[](filteredCount);
-        for (uint256 i = 0; i < filteredCount; i++) {
-            validRequestIDs[i] = filteredRequestIDs[i];
-        }
+        // Use centralized filtering function to get valid request IDs
+        uint256[] memory validRequestIDs = _filterValidRequestsForBatch(requestIDs);
 
         require(validRequestIDs.length > 0, "No valid unprocessed request IDs provided");
         return _createBatchInternal(validRequestIDs);
@@ -389,25 +372,8 @@ contract AggregatorBatches is IAggregatorBatches {
         if (requestIDs.length == 0) return 0;
         require(explicitBatchNumber > 0, "Batch number must be greater than 0");
 
-        // Filter only existing unprocessed requests that haven't been added to a batch yet
-        uint256[] memory filteredRequestIDs = new uint256[](requestIDs.length);
-        uint256 filteredCount = 0;
-
-        for (uint256 i = 0; i < requestIDs.length; i++) {
-            // Double-check both that the request is in the unprocessed pool AND not already in a batch
-            // This provides extra protection against edge cases where a request might still be in the 
-            // unprocessed pool even though it's been added to a batch
-            if (unprocessedRequestIds.contains(requestIDs[i]) && !requestAddedToBatch[requestIDs[i]]) {
-                filteredRequestIDs[filteredCount] = requestIDs[i];
-                filteredCount++;
-            }
-        }
-
-        // Create a properly sized array with only valid IDs
-        uint256[] memory validRequestIDs = new uint256[](filteredCount);
-        for (uint256 i = 0; i < filteredCount; i++) {
-            validRequestIDs[i] = filteredRequestIDs[i];
-        }
+        // Use centralized filtering function to get valid request IDs
+        uint256[] memory validRequestIDs = _filterValidRequestsForBatch(requestIDs);
 
         require(validRequestIDs.length > 0, "No valid unprocessed request IDs provided");
         return _createBatchWithExplicitNumber(validRequestIDs, explicitBatchNumber);
@@ -563,6 +529,41 @@ contract AggregatorBatches is IAggregatorBatches {
         uint256 batchNumber = _createBatchWithExplicitNumber(requestIds, explicitBatchNumber);
 
         return (batchNumber, successCount);
+    }
+
+    /**
+     * @dev Filters a list of request IDs to only include valid ones for batching
+     * This is a centralized function to ensure consistent rules are applied for all batch operations
+     *
+     * @param requestIDs Array of request IDs to filter
+     * @return filteredIDs Array of valid request IDs that can be added to a batch
+     */
+    function _filterValidRequestsForBatch(uint256[] memory requestIDs) private view returns (uint256[] memory) {
+        // First pass: count valid requests
+        uint256 validCount = 0;
+        for (uint256 i = 0; i < requestIDs.length; i++) {
+            // A valid request must:
+            // 1. Be in the unprocessed pool
+            // 2. Not already be marked as added to a batch
+            // This double-check protects against edge cases where a request might somehow
+            // remain in the unprocessed pool despite being marked as batched
+            if (unprocessedRequestIds.contains(requestIDs[i]) && !requestAddedToBatch[requestIDs[i]]) {
+                validCount++;
+            }
+        }
+
+        // Second pass: create properly sized array and fill it
+        uint256[] memory validRequestIDs = new uint256[](validCount);
+        uint256 validIndex = 0;
+
+        for (uint256 i = 0; i < requestIDs.length; i++) {
+            if (unprocessedRequestIds.contains(requestIDs[i]) && !requestAddedToBatch[requestIDs[i]]) {
+                validRequestIDs[validIndex] = requestIDs[i];
+                validIndex++;
+            }
+        }
+
+        return validRequestIDs;
     }
 
     /**
@@ -963,5 +964,21 @@ contract AggregatorBatches is IAggregatorBatches {
         require(newOwner != address(0), "New owner cannot be zero address");
 
         owner = newOwner;
+    }
+
+    /**
+     * @dev TEST ONLY FUNCTION - DO NOT USE IN PRODUCTION
+     * This function exists only for unit testing edge cases
+     *
+     * Allows tests to force a requestID into the unprocessed pool even if
+     * it has already been marked as added to a batch. This helps test the
+     * defensive programming against edge cases where a request is both
+     * in the unprocessed pool and marked as batched.
+     *
+     * @param requestID The request ID to force into the unprocessed pool
+     */
+    function _testOnlyForceAddToUnprocessedPool(uint256 requestID) external onlyOwner {
+        // Add the requestID to the unprocessed pool without changing requestAddedToBatch
+        unprocessedRequestIds.add(requestID);
     }
 }

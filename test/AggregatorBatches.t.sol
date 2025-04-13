@@ -11,6 +11,39 @@ contract AggregatorBatchesTest is Test {
     address[] public trustedAggregators;
     address public nonAggregator;
 
+    /**
+     * @dev Helper function to forcibly add a request ID to the unprocessed pool
+     * This is used to test edge cases where a request is both marked as batched
+     * and somehow remains in or gets added back to the unprocessed pool
+     */
+    function _forceAddToUnprocessedPool(uint256 requestID) internal {
+        // To directly add to the unprocessed pool, we need to:
+        // 1. Get the address of the aggregator contract
+        // 2. Call a specially crafted function that does the operation
+
+        // Call a function on the contract that will add the ID to the unprocessed pool
+        bytes memory callData = abi.encodeWithSignature("_testOnlyForceAddToUnprocessedPool(uint256)", requestID);
+
+        // Execute the call as a prank from the contract owner
+        vm.prank(owner);
+        (bool success,) = address(aggregator).call(callData);
+
+        // If this fails, the contract doesn't have our test helper, so fall back to direct manipuation
+        if (!success) {
+            // Direct storage manipulation using hardcoded EnumerableSet layout knowledge
+            // Warning: This is fragile and depends on internal Solidity storage layout
+            // This assumes the unprocessedRequestIds is the 4th storage slot in the contract
+            bytes32 setSlot = keccak256(abi.encode(uint256(3)));
+
+            // Get the current length
+            vm.store(address(aggregator), setSlot, bytes32(uint256(1)));
+
+            // Store the value at index 0
+            bytes32 valueSlot = keccak256(abi.encode(setSlot));
+            vm.store(address(aggregator), valueSlot, bytes32(requestID));
+        }
+    }
+
     function setUp() public {
         // Setup test accounts
         owner = address(this);
@@ -547,6 +580,49 @@ contract AggregatorBatchesTest is Test {
 
         // It should NOT be added back to the unprocessed pool
         assertFalse(aggregator.isRequestUnprocessed(601), "Request 601 should not be added back to unprocessed pool");
+
+        // Special test for the critical edge case: test the robustness of our filtering
+        // by simulating a request that is in the unprocessed pool but also marked as batched
+        // This would normally not happen, but we want to verify our protection works
+
+        // Instead of trying to manipulate storage, simply create a new test case that's cleaner
+        // Create new test requests so we have a clean state to work with
+        vm.startPrank(trustedAggregators[0]);
+        aggregator.submitCommitment(701, bytes("edge payload 701"), bytes("edge auth 701"));
+        aggregator.submitCommitment(702, bytes("edge payload 702"), bytes("edge auth 702"));
+        vm.stopPrank();
+
+        // Create a batch with request 701 only, this properly marks it as batched
+        uint256[] memory firstEdgeBatchIDs = new uint256[](1);
+        firstEdgeBatchIDs[0] = 701;
+
+        vm.prank(trustedAggregators[0]);
+        aggregator.createBatchForRequests(firstEdgeBatchIDs);
+
+        // Artificially add request 701 back to the unprocessed pool
+        // To do this, we need to call submitCommitment again with exact same parameters
+        // (This works because the contract only prevents modification, not exact resubmission)
+        vm.prank(trustedAggregators[0]);
+        aggregator.submitCommitment(701, bytes("edge payload 701"), bytes("edge auth 701"));
+
+        // Use an internal helper on the test contract to directly force 701 into the unprocessed pool
+        _forceAddToUnprocessedPool(701);
+
+        // Now verify that our manipulation worked and 701 appears to be in the unprocessed pool
+        assertTrue(aggregator.isRequestUnprocessed(701), "Request 701 should appear in unprocessed pool for test");
+
+        // Try to create a batch that includes the manipulated request
+        uint256[] memory edgeCaseRequestIDs = new uint256[](2);
+        edgeCaseRequestIDs[0] = 701; // Is now in unprocessed pool but also marked as batched
+        edgeCaseRequestIDs[1] = 702; // Not yet in a batch
+
+        vm.prank(trustedAggregators[0]);
+        uint256 batch3 = aggregator.createBatchForRequests(edgeCaseRequestIDs);
+
+        // Verify the edge case batch only contains request 702, filtering out 701 despite it being in unprocessed pool
+        (IAggregatorBatches.CommitmentRequest[] memory batch3Requests,,) = aggregator.getBatch(batch3);
+        assertEq(batch3Requests.length, 1, "Edge case batch should only contain 1 request (702)");
+        assertEq(batch3Requests[0].requestID, 702, "Edge case batch should only contain request 702");
 
         // Try to modify a commitment that was in a batch
         vm.prank(trustedAggregators[0]);
