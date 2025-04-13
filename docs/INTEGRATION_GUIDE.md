@@ -602,6 +602,51 @@ app.use('/api', rateLimiter);
    ```
 
 3. **Configure test client**:
+   ```bash
+   cd ts-client
+   npm run build
+   ```
+
+### Automated E2E Testing
+
+For comprehensive end-to-end testing, the repository includes a script that handles:
+- Setting up a local Ethereum node
+- Deploying the contract
+- Running automated tests
+
+```bash
+# Run all tests
+./scripts/manual-e2e-test.sh all
+
+# Run only integration tests
+./scripts/manual-e2e-test.sh integration
+
+# Run only gateway tests
+./scripts/manual-e2e-test.sh gateway
+```
+
+### Gateway Testing with CLI Tool
+
+The repository includes a specialized CLI tool for testing gateway endpoints. This tool is valuable for both automated and manual validation of gateway functionality.
+
+#### Basic Usage
+
+```bash
+npx ts-node src/test-gateway.ts http://gateway-url [options]
+```
+
+#### Gateway Test Features
+
+The gateway test tool provides:
+- Commitment submission testing
+- Inclusion proof polling and verification
+- Support for both inclusion and non-inclusion proofs
+- Detailed reporting of test results
+- Configurable timeout and polling parameters
+
+For detailed documentation on the gateway testing tool, see the [Gateway Testing Guide](GATEWAY_TESTING_GUIDE.md).
+
+### Validating Core Functionality
    ```typescript
    const testClient = new UniCityAnchorClient({
      providerUrl: 'http://localhost:8545',

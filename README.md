@@ -21,19 +21,38 @@ The Ethereum Unicity Anchor provides a trustless framework for processing user c
 To run the integration tests that demonstrate the full system functionality:
 
 ```bash
-# Run the automated integration test script
-./scripts/manual-e2e-test.sh
+# Run all integration tests
+./scripts/manual-e2e-test.sh all
+
+# Run only contract integration tests
+./scripts/manual-e2e-test.sh integration
+
+# Run only gateway tests
+./scripts/manual-e2e-test.sh gateway
 ```
 
 This will:
 1. Start a local Anvil blockchain
 2. Deploy the smart contracts
-3. Run integration tests that verify the TypeScript client can:
+3. Run integration tests that verify the system can:
    - Add aggregators
    - Submit commitments
    - Create batches
    - Process batches
+   - Generate and verify inclusion proofs (gateway tests)
 4. Clean up resources when done
+
+### Testing Gateway Endpoints
+
+To manually test a gateway endpoint:
+
+```bash
+# Run the gateway test tool
+cd ts-client
+npx ts-node src/test-gateway.ts http://your-gateway-url --verbose
+```
+
+See the [Gateway Testing Guide](docs/GATEWAY_TESTING_GUIDE.md) for details.
 
 ### Key Features:
 
