@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Ethereum Unicity Anchor Gateway API</title>
+  <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.10.3/swagger-ui.css">
+  <style>
+    html {
+      box-sizing: border-box;
+      overflow: -moz-scrollbars-vertical;
+      overflow-y: scroll;
+    }
+    *, *:before, *:after {
+      box-sizing: inherit;
+    }
+    body {
+      margin: 0;
+      background: #fafafa;
+    }
+    .topbar {
+      display: none;
+    }
+    .swagger-ui .info .title {
+      color: #3b4151;
+    }
+    .swagger-ui .scheme-container {
+      background-color: #f7f7f7;
+    }
+    .swagger-ui .opblock .opblock-summary-method {
+      min-width: 100px;
+    }
+    .swagger-ui .btn.authorize {
+      background-color: #49cc90;
+      color: #fff;
+    }
+    .swagger-ui .btn.authorize svg {
+      fill: #fff;
+    }
+  </style>
+</head>
+<body>
+  <div id="swagger-ui"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.10.3/swagger-ui-bundle.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.10.3/swagger-ui-standalone-preset.js"></script>
+  <script>
+    window.onload = function() {
+      // Begin Swagger UI call region
+      const ui = SwaggerUIBundle({
+        url: "./api-docs.yaml",
+        dom_id: '#swagger-ui',
+        deepLinking: true,
+        presets: [
+          SwaggerUIBundle.presets.apis,
+          SwaggerUIStandalonePreset
+        ],
+        plugins: [
+          SwaggerUIBundle.plugins.DownloadUrl
+        ],
+        layout: "StandaloneLayout",
+        validatorUrl: null,
+        displayRequestDuration: true,
+        docExpansion: "list",
+        tagsSorter: "alpha",
+        operationsSorter: "method"
+      });
+      // End Swagger UI call region
+      window.ui = ui;
+    };
+  </script>
+</body>
+</html>

@@ -1,0 +1,546 @@
+openapi: 3.0.0
+info:
+  title: Ethereum Unicity Anchor Gateway API
+  description: |
+    This API provides access to the Ethereum Unicity Anchor service, which allows 
+    clients to submit commitments and create batches that are anchored to the Ethereum blockchain.
+  version: 1.0.0
+  contact:
+    email: info@example.com
+servers:
+  - url: 'http://localhost:3000'
+    description: Local development server
+  - url: 'https://gateway.example.com'
+    description: Production gateway server
+tags:
+  - name: commitments
+    description: Commitment operations
+  - name: batches
+    description: Batch operations
+  - name: proofs
+    description: Inclusion proof operations
+paths:
+  /submitCommitment:
+    post:
+      tags:
+        - commitments
+      summary: Submit a single commitment
+      description: |
+        Submits a single commitment to the gateway. The commitment will be stored 
+        until it is included in a batch.
+      operationId: submitCommitment
+      security:
+        - apiKey: []
+        - jwt: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommitmentRequest'
+            example:
+              requestId: "1234567890"
+              transactionHash: "0d89c2fd427b3e71dee9f7cf7dab610f7db0f40b9d27160f2f93e6dc5ad271b0"
+              authenticator:
+                publicKey: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                stateHash: "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"
+                signature: "001122334455667788990011223344556677889900112233445566778899001122334455667788990011223344556677889900112233445566778899001122"
+      responses:
+        '200':
+          description: Commitment successfully submitted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommitmentResponse'
+              example:
+                status: "SUCCESS"
+        '400':
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: "INVALID_REQUEST"
+        '401':
+          description: Authentication failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: "AUTHENTICATION_FAILED"
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: "INTERNAL_ERROR"
+  
+  /submitMultipleCommitments:
+    post:
+      tags:
+        - commitments
+      summary: Submit multiple commitments in a single request
+      description: |
+        Submits multiple commitments in a single transaction. Optionally can also create a batch
+        with the submitted commitments.
+      operationId: submitMultipleCommitments
+      security:
+        - apiKey: []
+        - jwt: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MultipleCommitmentsRequest'
+            example:
+              requests:
+                - requestId: "1234567890"
+                  transactionHash: "0d89c2fd427b3e71dee9f7cf7dab610f7db0f40b9d27160f2f93e6dc5ad271b0"
+                  authenticator:
+                    publicKey: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                    stateHash: "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"
+                    signature: "001122334455667788990011223344556677889900112233445566778899001122334455667788990011223344556677889900112233445566778899001122"
+                - requestId: "1234567891"
+                  transactionHash: "1d89c2fd427b3e71dee9f7cf7dab610f7db0f40b9d27160f2f93e6dc5ad271b1"
+                  authenticator:
+                    publicKey: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                    stateHash: "bbccddeeee00112233445566778899aabbccddeeff00112233445566778899aa"
+                    signature: "112233445566778899001122334455667788990011223344556677889900112233445566778899001122334455667788990011223344556677889900112233"
+              createBatch: true
+      responses:
+        '200':
+          description: Commitments successfully submitted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MultipleCommitmentsResponse'
+              example:
+                status: "SUCCESS"
+                processedCount: 2
+                failedCount: 0
+                batchCreated: true
+                batchNumber: "1"
+        '400':
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: "INVALID_REQUEST"
+                processedCount: 0
+                failedCount: 2
+                batchCreated: false
+        '401':
+          description: Authentication failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: "AUTHENTICATION_FAILED"
+                processedCount: 0
+                failedCount: 0
+                batchCreated: false
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: "BATCH_CREATION_FAILED"
+                processedCount: 0
+                failedCount: 2
+                batchCreated: false
+
+  /submitBatch:
+    post:
+      tags:
+        - batches
+      summary: Submit commitments and create a batch in one operation
+      description: |
+        Submits multiple commitments and immediately creates a batch containing them in a single transaction.
+      operationId: submitBatch
+      security:
+        - apiKey: []
+        - jwt: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchSubmissionRequest'
+            example:
+              commitments:
+                - requestID: "1234567890"
+                  payload: "0x0d89c2fd427b3e71dee9f7cf7dab610f7db0f40b9d27160f2f93e6dc5ad271b0"
+                  authenticator: "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                - requestID: "1234567891"
+                  payload: "0x1d89c2fd427b3e71dee9f7cf7dab610f7db0f40b9d27160f2f93e6dc5ad271b1"
+                  authenticator: "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      responses:
+        '200':
+          description: Batch successfully created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchSubmissionResponse'
+              example:
+                success: true
+                batchNumber: "1"
+                successCount: "2"
+                transactionHash: "0x5d89c2fd427b3e71dee9f7cf7dab610f7db0f40b9d27160f2f93e6dc5ad271b5"
+        '400':
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "Invalid request - missing commitments"
+        '401':
+          description: Authentication failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "Authentication failed"
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "Failed to create batch"
+                message: "Contract execution failed"
+
+  /submitBatchWithNumber:
+    post:
+      tags:
+        - batches
+      summary: Submit commitments and create a batch with explicit batch number
+      description: |
+        Submits multiple commitments and creates a batch with an explicit batch number in a single transaction.
+        This allows for creating batches with specific numbers, potentially creating gaps in the batch sequence.
+      operationId: submitBatchWithNumber
+      security:
+        - apiKey: []
+        - jwt: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchWithNumberRequest'
+            example:
+              commitments:
+                - requestID: "1234567890"
+                  payload: "0x0d89c2fd427b3e71dee9f7cf7dab610f7db0f40b9d27160f2f93e6dc5ad271b0"
+                  authenticator: "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                - requestID: "1234567891"
+                  payload: "0x1d89c2fd427b3e71dee9f7cf7dab610f7db0f40b9d27160f2f93e6dc5ad271b1"
+                  authenticator: "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+              batchNumber: "42"
+      responses:
+        '200':
+          description: Batch successfully created with the specified batch number
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchSubmissionResponse'
+              example:
+                success: true
+                batchNumber: "42"
+                successCount: "2"
+                transactionHash: "0x5d89c2fd427b3e71dee9f7cf7dab610f7db0f40b9d27160f2f93e6dc5ad271b5"
+        '400':
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "Invalid request - missing batchNumber"
+        '401':
+          description: Authentication failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "Authentication failed"
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "Failed to create batch with explicit number"
+                message: "Contract execution failed"
+
+  /getInclusionProof/{requestId}:
+    get:
+      tags:
+        - proofs
+      summary: Get inclusion proof for a commitment
+      description: |
+        Retrieves an inclusion proof for a specific commitment identified by its request ID.
+        The proof can be used to verify that the commitment was included in a specific batch.
+      operationId: getInclusionProof
+      parameters:
+        - name: requestId
+          in: path
+          description: The request ID of the commitment to get the proof for
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Inclusion proof successfully retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InclusionProofResponse'
+              example:
+                merkleTreePath: ["0x1234", "0x5678", "0xabcd"]
+                authenticator:
+                  publicKey: "0x1111111111111111111111111111111111111111111111111111111111111111"
+                  stateHash: "0x2222222222222222222222222222222222222222222222222222222222222222"
+                  signature: "0x3333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333"
+                transactionHash: "0x4444444444444444444444444444444444444444444444444444444444444444"
+                batchNumber: "5"
+        '400':
+          description: Invalid request or batch not processed yet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Batch not processed yet"
+        '404':
+          description: Request ID not found in any batch
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Request not found in any batch"
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Error retrieving request data"
+
+components:
+  securitySchemes:
+    apiKey:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: API key authentication with Bearer prefix
+    jwt:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token authentication
+
+  schemas:
+    CommitmentRequest:
+      type: object
+      required:
+        - requestId
+        - transactionHash
+        - authenticator
+      properties:
+        requestId:
+          type: string
+          description: Unique identifier for the request
+        transactionHash:
+          type: string
+          description: Transaction hash to be committed
+        authenticator:
+          type: object
+          required:
+            - publicKey
+            - stateHash
+            - signature
+          properties:
+            publicKey:
+              type: string
+              description: Public key for the authenticator
+            stateHash:
+              type: string
+              description: State hash for the authenticator
+            signature:
+              type: string
+              description: Signature for the authenticator
+
+    CommitmentResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum:
+            - SUCCESS
+            - INVALID_REQUEST
+            - REQUEST_ID_MISMATCH
+            - AUTHENTICATION_FAILED
+            - BATCH_CREATION_FAILED
+            - INTERNAL_ERROR
+          description: Status of the commitment submission
+
+    MultipleCommitmentsRequest:
+      type: object
+      required:
+        - requests
+      properties:
+        requests:
+          type: array
+          items:
+            $ref: '#/components/schemas/CommitmentRequest'
+          description: Array of commitment requests
+        createBatch:
+          type: boolean
+          description: Whether to create a batch with the submitted commitments
+
+    MultipleCommitmentsResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum:
+            - SUCCESS
+            - INVALID_REQUEST
+            - AUTHENTICATION_FAILED
+            - BATCH_CREATION_FAILED
+            - INTERNAL_ERROR
+          description: Status of the multiple commitments submission
+        processedCount:
+          type: integer
+          description: Number of successfully processed commitments
+        failedCount:
+          type: integer
+          description: Number of failed commitments
+        batchCreated:
+          type: boolean
+          description: Whether a batch was created
+        batchNumber:
+          type: string
+          description: The batch number if a batch was created
+
+    BatchSubmissionRequest:
+      type: object
+      required:
+        - commitments
+      properties:
+        commitments:
+          type: array
+          items:
+            $ref: '#/components/schemas/CommitmentData'
+          description: Array of commitment data
+
+    BatchWithNumberRequest:
+      type: object
+      required:
+        - commitments
+        - batchNumber
+      properties:
+        commitments:
+          type: array
+          items:
+            $ref: '#/components/schemas/CommitmentData'
+          description: Array of commitment data
+        batchNumber:
+          type: string
+          description: Explicit batch number to use
+
+    CommitmentData:
+      type: object
+      required:
+        - requestID
+        - payload
+        - authenticator
+      properties:
+        requestID:
+          type: string
+          description: Unique identifier for the request
+        payload:
+          type: string
+          description: Payload data (usually transaction hash, hex-encoded)
+        authenticator:
+          type: string
+          description: Authenticator data (hex-encoded)
+
+    BatchSubmissionResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: Whether the batch submission was successful
+        batchNumber:
+          type: string
+          description: The batch number that was created
+        successCount:
+          type: string
+          description: Number of successfully included commitments
+        transactionHash:
+          type: string
+          description: Transaction hash of the batch creation
+
+    InclusionProofResponse:
+      type: object
+      properties:
+        merkleTreePath:
+          type: array
+          items:
+            type: string
+          description: Merkle tree path for the proof
+        authenticator:
+          type: object
+          properties:
+            publicKey:
+              type: string
+              description: Public key used in the commitment
+            stateHash:
+              type: string
+              description: State hash used in the commitment
+            signature:
+              type: string
+              description: Signature used in the commitment
+        transactionHash:
+          type: string
+          description: Transaction hash from the original commitment
+        batchNumber:
+          type: string
+          description: Batch number that contains the commitment
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Error message
+        message:
+          type: string
+          description: Additional error details
+        status:
+          type: string
+          description: Error status code

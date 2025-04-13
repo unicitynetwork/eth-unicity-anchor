@@ -13,7 +13,9 @@
     "test:all": "npm run test:unit && npm run test:integration",
     "lint": "eslint 'src/**/*.ts'",
     "format": "prettier --write 'src/**/*.ts'",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "swagger": "node scripts/start-swagger.js",
+    "swagger:build": "npm run build && npm run swagger"
   },
   "keywords": [
     "ethereum",

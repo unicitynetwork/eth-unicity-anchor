@@ -24,6 +24,7 @@ const createMockContract = () => {
     createBatch: jest.fn().mockResolvedValue({ hash: '0xmocktx4' }),
     createBatchForRequests: jest.fn().mockResolvedValue({ hash: '0xmocktx5' }),
     getLatestBatchNumber: jest.fn().mockResolvedValue(BigInt(1)),
+    getNextAutoNumberedBatch: jest.fn().mockResolvedValue(BigInt(1)),
     getUnprocessedRequestCount: jest.fn().mockResolvedValue(BigInt(0)),
     connect: jest.fn().mockReturnThis(),
     on: jest.fn(),
@@ -78,6 +79,7 @@ describe('Batch Commitment Features', () => {
       submitAndCreateBatch: jest.fn(),
       createBatch: jest.fn(),
       getLatestBatchNumber: jest.fn().mockResolvedValue(BigInt(1)),
+      getNextAutoNumberedBatch: jest.fn().mockResolvedValue(BigInt(1)),
       getUnprocessedRequestCount: jest.fn().mockResolvedValue(BigInt(0)),
       connect: jest.fn().mockReturnThis(),
       on: jest.fn(),
@@ -327,8 +329,8 @@ describe('Batch Commitment Features', () => {
         });
       });
       
-      // Mock the getLatestBatchNumber method to return a batch number
-      jest.spyOn(testGateway, 'getLatestBatchNumber').mockResolvedValueOnce(BigInt(1));
+      // Mock the getNextAutoNumberedBatch method to return a batch number
+      jest.spyOn(testGateway, 'getNextAutoNumberedBatch').mockResolvedValueOnce(BigInt(1));
       
       // Call the method
       const result = await testGateway.createBatch();
