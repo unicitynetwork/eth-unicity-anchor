@@ -15,6 +15,7 @@ export const ABI = [
   'function getBatch(uint256 batchNumber) view returns (tuple(uint256 requestID, bytes payload, bytes authenticator)[] requests, bool processed, bytes hashroot)',
   'function getLatestProcessedBatchNumber() view returns (uint256 batchNumber)',
   'function getLatestBatchNumber() view returns (uint256 batchNumber)',
+  'function getNextAutoNumberedBatch() view returns (uint256 batchNumber)',
   'function getBatchHashroot(uint256 batchNumber) view returns (bytes hashroot)',
   'function getUnprocessedRequestCount() view returns (uint256)',
   'function getUnprocessedRequestAtIndex(uint256 index) view returns (uint256)',
