@@ -115,11 +115,23 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
             this.processedBatches.add(i.toString());
             syncedBatchCount++;
           } else {
-            console.warn(`[Sync] Batch ${i} hashroot mismatch:
-              Local:    ${ethers.hexlify(localHashroot)}
-              On-chain: ${onChainHashroot}`);
-            // Still mark as processed to avoid attempting to reprocess it
-            this.processedBatches.add(i.toString());
+            // CRITICAL SECURITY BREACH - data integrity failure
+            console.error(`[Sync] CRITICAL SECURITY FAILURE: Hashroot mismatch detected for batch ${i}:`);
+            console.error(`[Sync] Local calculated: ${ethers.hexlify(localHashroot)}`);
+            console.error(`[Sync] On-chain value:   ${onChainHashroot}`);
+            console.error(`[Sync] This represents a serious data integrity breach or SMT consistency failure!`);
+            
+            // This is a critical system failure that requires immediate termination
+            if (process.env.NODE_ENV !== 'test') {
+              console.error(`[Sync] CRITICAL SYSTEM INTEGRITY FAILURE: Exiting process to prevent data corruption`);
+              process.exit(1); // Exit with non-zero code to signal error
+            } else {
+              console.error(`[Sync] Would exit immediately in production mode. Continuing in test mode only.`);
+            }
+            
+            // Do NOT mark as processed - this prevents building an SMT on corrupted data
+            // Instead, throw an error to stop the sync process
+            throw new Error(`CRITICAL: Batch ${i} hashroot mismatch - system integrity failure`);
           }
         } catch (error) {
           console.error(`[Sync] Error processing batch ${i}:`, error);
@@ -132,6 +144,92 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
     } catch (error) {
       console.error('[Sync] Error synchronizing with on-chain state:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Verify hashroot consensus for a batch
+   * This is a critical security function that ensures data integrity
+   * 
+   * @param batchNumber Batch number to verify
+   * @param localHashroot Our locally calculated hashroot
+   * @param onChainHashroot Hashroot from the blockchain
+   * @returns True if consensus is achieved, false otherwise with critical error
+   */
+  protected async verifyHashrootConsensus(
+    batchNumber: bigint, 
+    localHashroot: Uint8Array | string,
+    onChainHashroot: string
+  ): Promise<{success: boolean; error?: Error; critical?: boolean; waitForConsensus?: boolean}> {
+    // Convert to hex string for comparison if needed
+    const localHashrootHex = typeof localHashroot === 'string' 
+      ? localHashroot 
+      : ethers.hexlify(localHashroot);
+    
+    // Step 1: Check if our hashroot matches the on-chain value
+    if (localHashrootHex !== onChainHashroot) {
+      // CRITICAL SECURITY ALERT - Data integrity failure
+      console.error(`CRITICAL SECURITY FAILURE: Hashroot mismatch detected for batch ${batchNumber}:`);
+      console.error(`Local calculated: ${localHashrootHex}`);
+      console.error(`On-chain value:   ${onChainHashroot}`);
+      console.error(`This represents a serious data integrity breach or SMT consistency failure!`);
+      
+      // This is a critical system failure that requires immediate termination
+      // Do not continue processing under any circumstances as it would corrupt the SMT
+      if (process.env.NODE_ENV !== 'test') {
+        console.error(`CRITICAL SYSTEM INTEGRITY FAILURE: Exiting process to prevent data corruption`);
+        process.exit(1); // Exit with non-zero code to signal error
+      } else {
+        console.error(`Would exit immediately in production mode. Continuing only because in test mode.`);
+      }
+      
+      return {
+        success: false, 
+        error: new Error(`CRITICAL: Batch ${batchNumber} hashroot mismatch - system integrity failure`),
+        critical: true
+      };
+    }
+    
+    // Step 2: Verify consensus by checking if the batch is processed on the contract
+    // The smart contract is the source of truth for whether quorum has been reached
+    try {
+      // Get the batch state directly from the contract
+      const batchInfo = await this.getBatch(batchNumber);
+      
+      // If the batch is marked as processed, consensus has been achieved
+      if (batchInfo.processed) {
+        // The smart contract has determined that sufficient votes have been received
+        // and the batch is officially processed - this is definitive proof of consensus
+        console.log(`Hashroot consensus verified for batch ${batchNumber} - batch is marked as processed in contract`);
+        return { success: true };
+      }
+      
+      // The batch exists but hasn't reached quorum yet
+      // Get current vote stats for informational purposes only
+      try {
+        const contract = this.contract;
+        const voteCounts = await contract.getVoteCounts(batchNumber);
+        const requiredVotes = await contract.requiredVotes();
+        
+        console.log(`Batch ${batchNumber} waiting for consensus: ${voteCounts}/${requiredVotes} votes received`);
+      } catch (error) {
+        // If we can't get vote counts, just log a general message
+        console.log(`Batch ${batchNumber} waiting for consensus - quorum not yet reached`);
+      }
+      
+      // Not processed yet, but this is normal consensus gathering - keep waiting
+      return {
+        success: false,
+        error: new Error(`Batch ${batchNumber} has not reached quorum yet`),
+        waitForConsensus: true // Flag indicating we should continue waiting, not a critical failure
+      };
+      
+    } catch (error) {
+      console.error(`Error checking hashroot consensus for batch ${batchNumber}:`, error);
+      return {
+        success: false,
+        error: error instanceof Error ? error : new Error(String(error))
+      };
     }
   }
 
@@ -168,7 +266,14 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
       const localHashroot = await this.calculateHashroot(batchInfo.requests);
       const localHashrootHex = ethers.hexlify(localHashroot);
       
-      if (localHashrootHex === batchInfo.hashroot) {
+      // Use the centralized consensus verification function
+      const consensusResult = await this.verifyHashrootConsensus(
+        batchNumber, 
+        localHashrootHex, 
+        batchInfo.hashroot
+      );
+      
+      if (consensusResult.success) {
         console.log(`Hashroot verification successful for batch ${batchNumber}`);
         this.processedBatches.add(batchKey);
         return {
@@ -177,22 +282,29 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
           verified: true
         };
       } else {
-        console.warn(`Hashroot mismatch for batch ${batchNumber}:
-          Local:    ${localHashrootHex}
-          On-chain: ${batchInfo.hashroot}`);
+        // Propagate critical failures
+        if (consensusResult.critical) {
+          return {
+            success: false,
+            error: consensusResult.error,
+            message: consensusResult.error?.message || 'Hashroot consensus verification failed',
+            critical: true
+          };
+        }
         
-        // Still mark as processed to avoid redundant checks
-        this.processedBatches.add(batchKey);
+        // For non-critical failures (like not enough votes yet), don't mark as processed
         return {
           success: false,
-          error: new Error(`Batch ${batchNumber} hashroot mismatch`),
-          message: 'Hashroot mismatch between local calculation and on-chain value'
+          error: consensusResult.error,
+          message: consensusResult.error?.message || 'Hashroot consensus verification failed'
         };
       }
     } catch (error) {
       console.error(`Error verifying batch ${batchNumber}:`, error);
-      // Still mark as processed to avoid endless retries
-      this.processedBatches.add(batchKey);
+      // Only mark as processed for non-critical errors
+      if (!(error instanceof Error && error.message.includes('CRITICAL'))) {
+        this.processedBatches.add(batchKey);
+      }
       return {
         success: false,
         error: error instanceof Error ? error : new Error(String(error)),
@@ -341,37 +453,70 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
     
     const results: TransactionResult[] = [];
     
-    // Process each unprocessed batch
-    for (let i = latestProcessedBatchNumber + 1n; i <= latestBatchNumber; i++) {
+    // Process batches sequentially without skipping
+    let nextBatchToProcess = latestProcessedBatchNumber + 1n;
+    
+    while (nextBatchToProcess <= latestBatchNumber) {
+      console.log(`Checking batch ${nextBatchToProcess}...`);
+      
       // Skip batches that have already been processed by this instance
-      if (this.processedBatches.has(i.toString())) {
-        console.log(`Skipping batch ${i} as it was already processed by this instance`);
+      if (this.processedBatches.has(nextBatchToProcess.toString())) {
+        console.log(`Skipping batch ${nextBatchToProcess} as it was already processed by this instance`);
         // Add a result to indicate this batch was skipped but previously processed
         results.push({
           success: true, // Count as success since we processed it before
-          message: `Batch ${i} already processed by this instance`,
+          message: `Batch ${nextBatchToProcess} already processed by this instance`,
           skipped: true
         });
+        nextBatchToProcess++; // Move to next batch
         continue;
       }
       
+      // First check if the batch exists before trying to process it
+      let batchExists = true;
       try {
-        console.log(`Processing batch ${i}...`);
-        const result = await this.processBatch(i);
-        results.push(result);
-        
-        if (!result.success) {
-          console.log(`Note: Batch ${i} processing was not successful: ${result.error?.message}`);
-        }
+        // Try to get the batch - this will throw if it doesn't exist
+        await this.getBatch(nextBatchToProcess);
       } catch (error) {
-        console.error(`Error processing batch ${i}:`, error);
-        // Continue with next batch instead of throwing
-        results.push({
-          success: false,
-          error: error instanceof Error ? error : new Error(String(error)),
-          message: `Failed to process batch ${i}`
-        });
+        // If we get "Batch does not exist" error, mark it and stop
+        if (error instanceof Error && error.message.includes("Batch does not exist")) {
+          console.log(`Batch ${nextBatchToProcess} does not exist (gap). Stopping batch processing.`);
+          results.push({
+            success: false,
+            error: error,
+            message: `Batch ${nextBatchToProcess} does not exist (gap detected)` 
+          });
+          return results; // Stop processing on first gap
+        }
+        batchExists = false;
       }
+      
+      // Only try to process if the batch exists
+      if (batchExists) {
+        try {
+          console.log(`Processing batch ${nextBatchToProcess}...`);
+          const result = await this.processBatch(nextBatchToProcess);
+          results.push(result);
+          
+          if (!result.success) {
+            console.log(`Note: Batch ${nextBatchToProcess} processing was not successful: ${result.error?.message}`);
+            // Stop at first failure - we can't continue past a failed batch
+            return results;
+          }
+        } catch (error) {
+          console.error(`Error processing batch ${nextBatchToProcess}:`, error);
+          // Stop at first error - we can't continue past a failed batch
+          results.push({
+            success: false,
+            error: error instanceof Error ? error : new Error(String(error)),
+            message: `Failed to process batch ${nextBatchToProcess}`
+          });
+          return results;
+        }
+      }
+      
+      // Move to next batch number
+      nextBatchToProcess++;
     }
     
     return results;

@@ -120,6 +120,20 @@ export interface TransactionResult {
    * Indicates this batch was verified against an on-chain processed batch
    */
   verified?: boolean;
+  
+  /**
+   * Indicates a critical failure that requires immediate attention
+   * When true, the system may exit with a non-zero code to prevent
+   * silent failures that could corrupt the SMT or batch sequence
+   */
+  critical?: boolean;
+  
+  /**
+   * Indicates that we should wait for consensus even if retry count is exceeded
+   * This is used for non-critical consensus states where we're waiting for
+   * enough aggregator votes without a hashroot mismatch
+   */
+  waitForConsensus?: boolean;
 }
 
 /**
