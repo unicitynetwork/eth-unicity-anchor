@@ -829,6 +829,61 @@ contract AggregatorBatches is IAggregatorBatches {
     }
 
     /**
+     * @dev Checks if a specific aggregator has voted for a specific hashroot in a batch
+     * @param batchNumber The batch number to query
+     * @param hashroot The hashroot to check
+     * @param aggregator The address of the aggregator to check
+     * @return voted True if the aggregator has voted for this hashroot, false otherwise
+     */
+    function hasAggregatorVotedForHashroot(uint256 batchNumber, bytes calldata hashroot, address aggregator) 
+        external 
+        view 
+        override
+        returns (bool voted) 
+    {
+        // Basic validation
+        require(batchNumber > 0 && batchNumber <= highestBatchNumber, "Invalid batch number");
+        require(batches[batchNumber].batchNumber != 0, "Batch does not exist");
+        
+        // Check if the aggregator has voted for this hashroot
+        return batchHashrootVotes[batchNumber][hashroot][aggregator];
+    }
+
+    /**
+     * @dev Gets the hashroot that an aggregator has voted for in a batch (if any)
+     * @param batchNumber The batch number to query
+     * @param aggregator The address of the aggregator to check
+     * @return hasVoted True if the aggregator has voted for any hashroot
+     * @return votedHashroot The hashroot the aggregator voted for (empty if none)
+     */
+    function getAggregatorVoteForBatch(uint256 batchNumber, address aggregator)
+        external
+        view
+        override
+        returns (bool hasVoted, bytes memory votedHashroot)
+    {
+        // Basic validation
+        require(batchNumber > 0 && batchNumber <= highestBatchNumber, "Invalid batch number");
+        require(batches[batchNumber].batchNumber != 0, "Batch does not exist");
+        
+        // Get all submitted hashroots for this batch
+        bytes[] memory allSubmittedHashroots = getSubmittedHashrootsForBatch(batchNumber);
+        
+        // Check if the aggregator has voted for any of these hashroots
+        for (uint256 i = 0; i < allSubmittedHashroots.length; i++) {
+            bytes memory submittedHashroot = allSubmittedHashroots[i];
+            
+            // Check if the aggregator voted for this hashroot
+            if (batchHashrootVotes[batchNumber][submittedHashroot][aggregator]) {
+                return (true, submittedHashroot);
+            }
+        }
+        
+        // Aggregator hasn't voted for any hashroot
+        return (false, "");
+    }
+
+    /**
      * @dev Submits an updated hashroot after processing a batch
      * @param batchNumber The number of the batch that was processed
      * @param hashroot The new SMT hashroot after processing the batch

@@ -23,6 +23,8 @@ export const ABI = [
   'function getAllUnprocessedRequests() view returns (uint256[])',
   'function getSubmittedHashrootCount(uint256 batchNumber) view returns (uint256 count)',
   'function getHashrootVoteCount(uint256 batchNumber, bytes hashroot) view returns (uint256 voteCount)',
+  'function hasAggregatorVotedForHashroot(uint256 batchNumber, bytes hashroot, address aggregator) view returns (bool voted)',
+  'function getAggregatorVoteForBatch(uint256 batchNumber, address aggregator) view returns (bool hasVoted, bytes votedHashroot)',
 
   // Transaction functions
   'function submitCommitment(uint256 requestID, bytes calldata payload, bytes calldata authenticator) external',

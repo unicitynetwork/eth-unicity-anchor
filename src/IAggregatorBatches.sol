@@ -198,6 +198,30 @@ interface IAggregatorBatches {
     function submitHashroot(uint256 batchNumber, bytes calldata hashroot) external returns (bool success);
 
     /**
+     * @dev Checks if a specific aggregator has voted for a specific hashroot in a batch
+     * @param batchNumber The batch number to query
+     * @param hashroot The hashroot to check
+     * @param aggregator The address of the aggregator to check
+     * @return voted True if the aggregator has voted for this hashroot, false otherwise
+     */
+    function hasAggregatorVotedForHashroot(uint256 batchNumber, bytes calldata hashroot, address aggregator) 
+        external 
+        view 
+        returns (bool voted);
+
+    /**
+     * @dev Gets the hashroot that an aggregator has voted for in a batch (if any)
+     * @param batchNumber The batch number to query
+     * @param aggregator The address of the aggregator to check
+     * @return hasVoted True if the aggregator has voted for any hashroot
+     * @return votedHashroot The hashroot the aggregator voted for (empty if none)
+     */
+    function getAggregatorVoteForBatch(uint256 batchNumber, address aggregator)
+        external
+        view
+        returns (bool hasVoted, bytes memory votedHashroot);
+
+    /**
      * @dev Event emitted when a new commitment request is added to the pool
      */
     event RequestSubmitted(uint256 indexed requestID, bytes payload);
