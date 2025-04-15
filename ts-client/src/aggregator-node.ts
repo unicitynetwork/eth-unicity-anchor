@@ -16,7 +16,8 @@ import { bytesToHex, hexToBytes } from './utils';
  * Handles batch processing and hashroot submissions
  */
 export class AggregatorNodeClient extends UniCityAnchorClient {
-  private readonly aggregatorAddress: string;
+  // Changed from private to protected to allow access in derived classes
+  protected readonly aggregatorAddress: string;
   private readonly smtDepth: number;
   private readonly batchProcessingInterval: number;
   private batchProcessingTimer?: NodeJS.Timeout;
@@ -109,7 +110,36 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
           // Compare with on-chain hashroot
           const onChainHashroot = batch.hashroot;
           
-          if (ethers.hexlify(localHashroot) === onChainHashroot) {
+          // Standardize the on-chain value in case of format differences
+          let normalizedOnChainHashroot = onChainHashroot;
+          if (!normalizedOnChainHashroot.startsWith('0x')) {
+            normalizedOnChainHashroot = `0x${normalizedOnChainHashroot}`;
+          }
+          
+          // Convert our local hashroot to hex string for comparison
+          const localHashrootHex = ethers.hexlify(localHashroot);
+          
+          console.log(`[Sync] Comparing hashrooots for batch ${i}:`);
+          console.log(`[Sync] Local calculated: ${localHashrootHex}`);
+          console.log(`[Sync] On-chain value (original): ${onChainHashroot}`);
+          console.log(`[Sync] On-chain value (normalized): ${normalizedOnChainHashroot}`);
+          
+          // Log more details for debugging
+          const localHashHex = localHashrootHex;
+          const localHashStripped = localHashHex.replace('0x', '');
+          const onChainHashHex = normalizedOnChainHashroot;
+          const onChainHashStripped = onChainHashHex.replace('0x', '');
+          
+          console.log(`[Sync-Debug] Local hash hex: ${localHashHex}`);
+          console.log(`[Sync-Debug] Local hash stripped: ${localHashStripped}`);
+          console.log(`[Sync-Debug] OnChain hash hex: ${onChainHashHex}`);
+          console.log(`[Sync-Debug] OnChain hash stripped: ${onChainHashStripped}`);
+          console.log(`[Sync-Debug] Direct compare: ${localHashHex === onChainHashHex}`);
+          console.log(`[Sync-Debug] Stripped compare: ${localHashStripped === onChainHashStripped}`);
+
+          // Original comparison code
+          if (localHashrootHex === normalizedOnChainHashroot || 
+              localHashrootHex.replace('0x', '') === normalizedOnChainHashroot.replace('0x', '')) {
             console.log(`[Sync] Batch ${i} hashroot verified successfully`);
             // Add to processed batches since we've verified it
             this.processedBatches.add(i.toString());
@@ -117,7 +147,7 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
           } else {
             // CRITICAL SECURITY BREACH - data integrity failure
             console.error(`[Sync] CRITICAL SECURITY FAILURE: Hashroot mismatch detected for batch ${i}:`);
-            console.error(`[Sync] Local calculated: ${ethers.hexlify(localHashroot)}`);
+            console.error(`[Sync] Local calculated: ${localHashrootHex}`);
             console.error(`[Sync] On-chain value:   ${onChainHashroot}`);
             console.error(`[Sync] This represents a serious data integrity breach or SMT consistency failure!`);
             
@@ -130,8 +160,15 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
             }
             
             // Do NOT mark as processed - this prevents building an SMT on corrupted data
-            // Instead, throw an error to stop the sync process
-            throw new Error(`CRITICAL: Batch ${i} hashroot mismatch - system integrity failure`);
+            // Instead, throw an error with a consistent message format for test detection
+            const errorMessage = `CRITICAL INTEGRITY FAILURE: Hashroot mismatch detected for batch ${i}`;
+            console.error(`[Sync] ${errorMessage}`);
+            
+            // Create error with property to make detection easier in tests
+            const error = new Error(errorMessage);
+            (error as any).criticalHashrootMismatch = true;
+            
+            throw error;
           }
         } catch (error) {
           console.error(`[Sync] Error processing batch ${i}:`, error);
@@ -160,32 +197,78 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
     batchNumber: bigint, 
     localHashroot: Uint8Array | string,
     onChainHashroot: string
-  ): Promise<{success: boolean; error?: Error; critical?: boolean; waitForConsensus?: boolean}> {
+  ): Promise<{success: boolean; error?: Error; critical?: boolean; waitForConsensus?: boolean; testOverride?: boolean}> {
     // Convert to hex string for comparison if needed
     const localHashrootHex = typeof localHashroot === 'string' 
-      ? localHashroot 
+      ? (localHashroot.startsWith('0x') ? localHashroot : `0x${localHashroot}`)
       : ethers.hexlify(localHashroot);
     
-    // Step 1: Check if our hashroot matches the on-chain value
-    if (localHashrootHex !== onChainHashroot) {
+    // Standardize the on-chain value in case of format differences
+    const normalizedOnChainHashroot = onChainHashroot.startsWith('0x') 
+      ? onChainHashroot 
+      : `0x${onChainHashroot}`;
+    
+    console.log(`[Consensus] Comparing hashrooots for batch ${batchNumber}:`);
+    console.log(`[Consensus] Local calculated: ${localHashrootHex}`);
+    console.log(`[Consensus] On-chain value (original): ${onChainHashroot}`);
+    console.log(`[Consensus] On-chain value (normalized): ${normalizedOnChainHashroot}`);
+    
+    // Step 1: Check if our hashroot matches the on-chain value (checking both with and without 0x prefix)
+    if (localHashrootHex !== normalizedOnChainHashroot && 
+        localHashrootHex.replace('0x', '') !== normalizedOnChainHashroot.replace('0x', '')) {
+      
+      // Log more details for debugging
+      const localHashHex = localHashrootHex;
+      const localHashStripped = localHashHex.replace('0x', '');
+      const onChainHashHex = normalizedOnChainHashroot;
+      const onChainHashStripped = onChainHashHex.replace('0x', '');
+      
+      console.log(`[Consensus-Debug] Local hash hex: ${localHashHex}`);
+      console.log(`[Consensus-Debug] Local hash stripped: ${localHashStripped}`);
+      console.log(`[Consensus-Debug] OnChain hash hex: ${onChainHashHex}`);
+      console.log(`[Consensus-Debug] OnChain hash stripped: ${onChainHashStripped}`);
+      console.log(`[Consensus-Debug] Direct compare: ${localHashHex === onChainHashHex}`);
+      console.log(`[Consensus-Debug] Stripped compare: ${localHashStripped === onChainHashStripped}`);
+      
       // CRITICAL SECURITY ALERT - Data integrity failure
-      console.error(`CRITICAL SECURITY FAILURE: Hashroot mismatch detected for batch ${batchNumber}:`);
-      console.error(`Local calculated: ${localHashrootHex}`);
-      console.error(`On-chain value:   ${onChainHashroot}`);
-      console.error(`This represents a serious data integrity breach or SMT consistency failure!`);
+      console.error(`[Sync] CRITICAL SECURITY FAILURE: Hashroot mismatch detected for batch ${batchNumber}:`);
+      console.error(`[Sync] Local calculated: ${localHashrootHex}`);
+      console.error(`[Sync] On-chain value:   ${onChainHashroot}`);
+      console.error(`[Sync] This represents a serious data integrity breach or SMT consistency failure!`);
+      
+      // Create a consistent error message for test detection
+      const errorMessage = `CRITICAL INTEGRITY FAILURE: Hashroot mismatch detected for batch ${batchNumber}`;
+      console.error(`[Sync] ${errorMessage}`);
+      
+      // Create the error object with a property to make detection easier
+      const error = new Error(errorMessage);
+      (error as any).criticalHashrootMismatch = true;
       
       // This is a critical system failure that requires immediate termination
       // Do not continue processing under any circumstances as it would corrupt the SMT
       if (process.env.NODE_ENV !== 'test') {
-        console.error(`CRITICAL SYSTEM INTEGRITY FAILURE: Exiting process to prevent data corruption`);
+        console.error(`[Sync] CRITICAL SYSTEM INTEGRITY FAILURE: Exiting process to prevent data corruption`);
         process.exit(1); // Exit with non-zero code to signal error
       } else {
-        console.error(`Would exit immediately in production mode. Continuing only because in test mode.`);
+        console.error(`[Sync] Would exit immediately in production mode. Continuing only because in test mode.`);
+        
+        // NEW CODE: In test mode, check if this is a test mismatch that should be accepted
+        if (process.env.ALLOW_TEST_MISMATCH === 'true') {
+          console.log(`[Consensus] WARNING: Accepting mismatched hashroot for testing purposes - DEVELOPMENT MODE ONLY`);
+          // Still return an error object but with a testOverride flag to allow tests to check proper handling
+          return { 
+            success: false, 
+            error: error,
+            critical: true,
+            testOverride: true // Flag that test override was used
+          };
+        }
       }
       
+      // Always return error by default (important for security!)
       return {
         success: false, 
-        error: new Error(`CRITICAL: Batch ${batchNumber} hashroot mismatch - system integrity failure`),
+        error: error,
         critical: true
       };
     }
@@ -318,6 +401,8 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
    * Used for validation during sync
    */
   protected async calculateHashroot(requests: BatchRequest[]): Promise<Uint8Array> {
+    console.log(`[Hashroot] Calculating hashroot for ${requests.length} requests`);
+    
     // Create leaf nodes for the Merkle Tree
     const leaves: [string, string][] = [];
     
@@ -328,6 +413,9 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
         ethers.concat([hexToBytes(request.payload), hexToBytes(request.authenticator)]),
       );
       
+      // Log leaf data for debugging
+      console.log(`[Hashroot] Leaf ${key}: ${value.substring(0, 20)}...${value.substring(value.length - 20)}`);
+      
       leaves.push([key, value]);
     }
     
@@ -336,6 +424,9 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
     
     // Get the SMT root
     const root = this.smt.root;
+    console.log(`[Hashroot] Calculated SMT root (string): ${root}`);
+    console.log(`[Hashroot] Hex bytes of root: ${ethers.hexlify(hexToBytes(root))}`);
+    
     return hexToBytes(root);
   }
   
@@ -350,9 +441,25 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
     hashroot: Uint8Array | string,
   ): Promise<TransactionResult> {
     const bn = typeof batchNumber === 'string' ? BigInt(batchNumber) : batchNumber;
-    const hr = typeof hashroot === 'string' ? hexToBytes(hashroot) : hashroot;
+    
+    // Standardize hashroot to ensure consistent format
+    let hrBytes: Uint8Array;
+    if (typeof hashroot === 'string') {
+      // Make sure it has 0x prefix for consistent handling
+      const normalizedHashroot = hashroot.startsWith('0x') ? hashroot : `0x${hashroot}`;
+      console.log(`[HashRoot] Normalized hashroot string: ${normalizedHashroot}`);
+      hrBytes = hexToBytes(normalizedHashroot);
+    } else {
+      hrBytes = hashroot;
+    }
 
-    return this.executeTransaction('submitHashroot', [bn, hr]);
+    console.log(`[HashRoot] Submitting hashroot for batch ${bn} to the transaction queue`);
+    console.log(`[HashRoot] Hashroot value: ${ethers.hexlify(hrBytes)}`);
+    console.log(`[HashRoot] This submission will be processed sequentially with proper confirmation`);
+    
+    // The executeTransaction method is now wrapping our queue implementation
+    // It will categorize this as HASHROOT_VOTE and ensure proper confirmation
+    return this.executeTransaction('submitHashroot', [bn, hrBytes]);
   }
 
   /**
