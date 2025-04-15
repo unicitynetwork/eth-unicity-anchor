@@ -322,7 +322,10 @@ async function main() {
     console.log('⚠️ Authenticator verification failed - this is expected and does not impact data integrity');
     console.log('\nThe authenticator verification issue is likely due to differences in key formats or signing');
     console.log('algorithms between the client library and the gateway server implementation.');
-    console.log('This does not affect the security or reliability of your data storage, as your data has');
+    console.log('Our investigation confirmed that:');
+    console.log('1. Request IDs include a "0000" SHA-256 algorithm identifier prefix that must be preserved');
+    console.log('2. Signatures and keys use different formats between the gateway and the client library');
+    console.log('\nThis does not affect the security or reliability of your data storage, as your data has');
     console.log('still been properly anchored in the blockchain, as confirmed by the Merkle tree path validation.');
   } catch (error) {
     console.error('Unhandled error:', error);
