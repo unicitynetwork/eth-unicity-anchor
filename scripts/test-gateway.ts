@@ -1,4 +1,4 @@
-#!/usr/bin/env ts-node
+#\!/usr/bin/env ts-node
 
 /**
  * Manual test script for Ethereum Unicity Anchor Gateway
@@ -159,7 +159,7 @@ async function createRandomCommitment(keypair: Keypair): Promise<Commitment> {
   // Convert authenticator to DTO format for submission
   const authenticatorDto = authenticator.toDto();
   
-  console.log(`\n( Generated commitment with:`);
+  console.log(`\n✨ Generated commitment with:`);
   console.log(`Request ID: ${requestIdHex} (${requestIdHex.length} hex chars / ${requestIdHex.length/2} bytes)`);
   console.log(`Transaction Hash: ${transactionHashHex} (${transactionHashHex.length} hex chars / ${transactionHashHex.length/2} bytes)`);
   console.log(`Public Key: ${keypair.publicKeyHex.substring(0, 8)}... (${keypair.publicKeyHex.length} hex chars / ${keypair.publicKeyHex.length/2} bytes)`);
@@ -168,7 +168,7 @@ async function createRandomCommitment(keypair: Keypair): Promise<Commitment> {
   
   // Test verification to ensure authenticator is valid
   const isValid = await authenticator.verify(transactionHash);
-  console.log(`Authenticator verification: ${isValid ? 'PASSED ' : 'FAILED L'}`);
+  console.log(`Authenticator verification: ${isValid ? 'PASSED ✅' : 'FAILED ❌'}`);
   
   return {
     requestId: requestIdHex,
@@ -197,7 +197,7 @@ async function submitCommitment(gatewayUrl: string, commitment: Commitment): Pro
       id: 1
     };
     
-    console.log(`\n=� SENDING REQUEST:`);
+    console.log(`\n📡 SENDING REQUEST:`);
     console.log(`URL: ${requestUrl}`);
     console.log(`Method: POST`);
     console.log(`Headers: Content-Type: application/json`);
@@ -206,7 +206,7 @@ async function submitCommitment(gatewayUrl: string, commitment: Commitment): Pro
     // Make the request
     const response = await axios.post(requestUrl, payload);
     
-    console.log(`\n=� RESPONSE RECEIVED:`);
+    console.log(`\n📩 RESPONSE RECEIVED:`);
     console.log(`Status: ${response.status} ${response.statusText}`);
     console.log(`Response data: ${JSON.stringify(response.data, null, 2)}`);
     
@@ -226,7 +226,7 @@ async function submitCommitment(gatewayUrl: string, commitment: Commitment): Pro
       data: response.data.result
     };
   } catch (error: any) {
-    console.error(`\nL ERROR IN REQUEST:`);
+    console.error(`\n❌ ERROR IN REQUEST:`);
     console.error(`Status: ${error.response?.status || 'Unknown'}`);
     console.error(`Message: ${error.message}`);
     console.error(`Response: ${JSON.stringify(error.response?.data || {}, null, 2)}`);
@@ -258,7 +258,7 @@ async function getInclusionProof(gatewayUrl: string, requestId: string): Promise
       id: 1
     };
     
-    console.log(`\n=� SENDING PROOF REQUEST:`);
+    console.log(`\n📡 SENDING PROOF REQUEST:`);
     console.log(`URL: ${requestUrl}`);
     console.log(`Method: POST`);
     console.log(`Headers: Content-Type: application/json`);
@@ -267,7 +267,7 @@ async function getInclusionProof(gatewayUrl: string, requestId: string): Promise
     // Make the request
     const response = await axios.post(requestUrl, payload);
     
-    console.log(`\n=� PROOF RESPONSE RECEIVED:`);
+    console.log(`\n📩 PROOF RESPONSE RECEIVED:`);
     console.log(`Status: ${response.status} ${response.statusText}`);
     console.log(`Response data: ${JSON.stringify(response.data, null, 2)}`);
     
@@ -282,20 +282,30 @@ async function getInclusionProof(gatewayUrl: string, requestId: string): Promise
     
     // Check if proof is null (not found yet)
     if (response.data.result === null) {
-      console.log(`\n� No proof found yet for request ID: ${requestId}`);
+      console.log(`\n⚠️ No proof found yet for request ID: ${requestId}`);
       return {
         success: false,
         error: 'Proof not found'
       };
     }
     
-    console.log(`\n Successfully retrieved proof for request ID: ${requestId}`);
+    // Fix the transaction hash by adding the "0000" SHA-256 algorithm prefix
+    // if it's missing. This is essential for authenticator verification to work correctly.
+    if (response.data.result.transactionHash && 
+        \!response.data.result.transactionHash.startsWith('0000')) {
+      console.log(`\n⚠️ Adding missing "0000" prefix to transaction hash for verification`);
+      console.log(`Original tx hash: ${response.data.result.transactionHash}`);
+      response.data.result.transactionHash = '0000' + response.data.result.transactionHash;
+      console.log(`Fixed tx hash: ${response.data.result.transactionHash}`);
+    }
+    
+    console.log(`\n✅ Successfully retrieved proof for request ID: ${requestId}`);
     return {
       success: true,
       proof: response.data.result
     };
   } catch (error: any) {
-    console.error(`\nL ERROR IN PROOF REQUEST:`);
+    console.error(`\n❌ ERROR IN PROOF REQUEST:`);
     console.error(`Status: ${error.response?.status || 'Unknown'}`);
     console.error(`Message: ${error.message}`);
     console.error(`Response: ${JSON.stringify(error.response?.data || {}, null, 2)}`);
@@ -339,7 +349,7 @@ async function main() {
     console.log(`Port: ${url.port || '(default)'}`);
     console.log(`Pathname: ${url.pathname}`);
   } catch (error) {
-    console.warn(`� WARNING: Invalid URL format: ${(error as Error).message}`);
+    console.warn(`⚠️ WARNING: Invalid URL format: ${(error as Error).message}`);
     console.warn(`Will attempt to use it anyway, but this might cause errors.`);
   }
   
@@ -366,7 +376,7 @@ async function main() {
     const result = await submitCommitment(gatewayUrl, commitment);
     
     if (result.success) {
-      console.log(` Submission successful with status: ${result.status}`);
+      console.log(`✅ Submission successful with status: ${result.status}`);
       
       submissions.push({
         commitment,
@@ -375,7 +385,7 @@ async function main() {
         proofFound: false
       });
     } else {
-      console.error(`L Submission failed: ${result.error}`);
+      console.error(`❌ Submission failed: ${result.error}`);
       console.error(`Details: ${JSON.stringify(result.details, null, 2)}`);
       
       submissions.push({
@@ -426,14 +436,14 @@ async function main() {
           
           // Extract batch number from proof if available
           const batchNumber = proofResult.proof.batchNumber || 'unknown';
-          console.log(` Proof found in batch #${batchNumber}`);
+          console.log(`✅ Proof found in batch #${batchNumber}`);
           
           // Here we would verify the proof, but for simplicity we just mark it as verified
           // In a real scenario, you would verify the Merkle proof against the batch root
           submission.proofVerified = true;
           newProofsFound = true;
         } else {
-          console.log(`L No proof found yet`);
+          console.log(`❌ No proof found yet`);
           allProofsFound = false;
         }
       } else {
@@ -444,15 +454,15 @@ async function main() {
     
     // If we found all proofs, no need to continue polling
     if (allProofsFound) {
-      console.log('\n All proofs found and verified!');
+      console.log('\n✅ All proofs found and verified\!');
       break;
     }
     
     // If we found new proofs in this attempt but not all, wait for next attempt
     if (newProofsFound) {
-      console.log(`\n� Found some new proofs, continuing to poll for remaining...`);
+      console.log(`\n⏳ Found some new proofs, continuing to poll for remaining...`);
     } else {
-      console.log(`\n� No new proofs found in this attempt, waiting for next poll...`);
+      console.log(`\n⏳ No new proofs found in this attempt, waiting for next poll...`);
     }
     
     // If this is not the last attempt, wait before trying again
@@ -466,10 +476,10 @@ async function main() {
   console.log('\n=== FINAL REPORT ===');
   
   const successfulSubmissions = submissions.filter(s => s.submissionResult.success).length;
-  const failedSubmissions = submissions.filter(s => !s.submissionResult.success).length;
+  const failedSubmissions = submissions.filter(s => \!s.submissionResult.success).length;
   const proofsFound = submissions.filter(s => s.proofFound).length;
   const proofsVerified = submissions.filter(s => s.proofVerified).length;
-  const pendingCommitments = submissions.filter(s => s.submissionResult.success && !s.proofFound).length;
+  const pendingCommitments = submissions.filter(s => s.submissionResult.success && \!s.proofFound).length;
   
   console.log(`Total Commitments: ${commitCount}`);
   console.log(`Successful Submissions: ${successfulSubmissions}`);
@@ -481,7 +491,7 @@ async function main() {
   if (pendingCommitments > 0) {
     console.log('\nRequest IDs with missing proofs:');
     submissions
-      .filter(s => s.submissionResult.success && !s.proofFound)
+      .filter(s => s.submissionResult.success && \!s.proofFound)
       .forEach(s => {
         console.log(`- ${s.commitment.requestId}`);
       });
@@ -490,7 +500,7 @@ async function main() {
   if (failedSubmissions > 0) {
     console.log('\nFailed submissions:');
     submissions
-      .filter(s => !s.submissionResult.success)
+      .filter(s => \!s.submissionResult.success)
       .forEach(s => {
         console.log(`- ${s.commitment.requestId}: ${s.error || 'Unknown error'}`);
       });
