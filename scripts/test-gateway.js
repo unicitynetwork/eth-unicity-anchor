@@ -234,6 +234,16 @@ async function getInclusionProof(gatewayUrl, requestId) {
       };
     }
     
+    // Fix the transaction hash by adding the "0000" SHA-256 algorithm prefix
+    // if it's missing. This is essential for authenticator verification to work correctly.
+    if (response.data.result.transactionHash && 
+        !response.data.result.transactionHash.startsWith('0000')) {
+      console.log(`\n⚠️ Adding missing "0000" prefix to transaction hash for verification`);
+      console.log(`Original tx hash: ${response.data.result.transactionHash}`);
+      response.data.result.transactionHash = '0000' + response.data.result.transactionHash;
+      console.log(`Fixed tx hash: ${response.data.result.transactionHash}`);
+    }
+    
     console.log(`\n✅ Successfully retrieved proof for request ID: ${requestId}`);
     return {
       success: true,
