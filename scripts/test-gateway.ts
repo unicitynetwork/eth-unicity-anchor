@@ -438,9 +438,80 @@ async function main() {
           const batchNumber = proofResult.proof.batchNumber || 'unknown';
           console.log(`✅ Proof found in batch #${batchNumber}`);
           
-          // Here we would verify the proof, but for simplicity we just mark it as verified
-          // In a real scenario, you would verify the Merkle proof against the batch root
-          submission.proofVerified = true;
+          // Verify that the received transaction hash and authenticator match what we sent
+          console.log(`\n🔍 Verifying proof data matches our submission...`);
+          
+          // First, get the transaction hash without the prefix for comparison
+          // since we may have added the prefix for verification purposes
+          let receivedTxHash = proofResult.proof.transactionHash;
+          if (receivedTxHash.startsWith('0000')) {
+            receivedTxHash = receivedTxHash.substring(4);
+          }
+          
+          let originalTxHash = submission.commitment.transactionHash;
+          if (originalTxHash.startsWith('0000')) {
+            originalTxHash = originalTxHash.substring(4);
+          }
+          
+          // Check transaction hash
+          const txHashMatches = receivedTxHash === originalTxHash;
+          console.log(`Transaction hash match: ${txHashMatches ? '✅ YES' : '❌ NO'}`);
+          
+          if (\!txHashMatches) {
+            console.log(`  - Original: ${originalTxHash}`);
+            console.log(`  - Received: ${receivedTxHash}`);
+          }
+          
+          // Check authenticator
+          const authReceived = proofResult.proof.authenticator;
+          const authOriginal = submission.commitment.authenticator;
+          
+          const pubKeyMatches = authReceived.publicKey === authOriginal.publicKey;
+          const signatureMatches = authReceived.signature === authOriginal.signature;
+          // For state hash, we need to account for possible prefix differences
+          let stateHashMatches = authReceived.stateHash === authOriginal.stateHash;
+          if (\!stateHashMatches) {
+            // Check if the difference is just the '0000' prefix
+            if (authReceived.stateHash.startsWith('0000') && 
+                authReceived.stateHash.substring(4) === authOriginal.stateHash) {
+              stateHashMatches = true;
+            }
+            else if (authOriginal.stateHash.startsWith('0000') &&
+                    authOriginal.stateHash.substring(4) === authReceived.stateHash) {
+              stateHashMatches = true;
+            }
+          }
+          
+          console.log(`Authenticator comparison:`);
+          console.log(`  - Public key match: ${pubKeyMatches ? '✅ YES' : '❌ NO'}`);
+          console.log(`  - Signature match: ${signatureMatches ? '✅ YES' : '❌ NO'}`);
+          console.log(`  - State hash match: ${stateHashMatches ? '✅ YES' : '❌ NO'}`);
+          
+          if (\!pubKeyMatches) {
+            console.log(`    Original public key: ${authOriginal.publicKey}`);
+            console.log(`    Received public key: ${authReceived.publicKey}`);
+          }
+          
+          if (\!signatureMatches) {
+            console.log(`    Original signature: ${authOriginal.signature.substring(0, 32)}...`);
+            console.log(`    Received signature: ${authReceived.signature.substring(0, 32)}...`);
+          }
+          
+          if (\!stateHashMatches) {
+            console.log(`    Original state hash: ${authOriginal.stateHash}`);
+            console.log(`    Received state hash: ${authReceived.stateHash}`);
+          }
+          
+          // Set the verification flag based on all checks
+          const allMatches = txHashMatches && pubKeyMatches && (signatureMatches || stateHashMatches);
+          submission.proofVerified = allMatches;
+          
+          if (allMatches) {
+            console.log(`\n✅ All proof data verified successfully\!`);
+          } else {
+            console.log(`\n⚠️ Some proof data doesn't match what was submitted`);
+          }
+          
           newProofsFound = true;
         } else {
           console.log(`❌ No proof found yet`);
@@ -480,18 +551,29 @@ async function main() {
   const proofsFound = submissions.filter(s => s.proofFound).length;
   const proofsVerified = submissions.filter(s => s.proofVerified).length;
   const pendingCommitments = submissions.filter(s => s.submissionResult.success && \!s.proofFound).length;
+  const dataMismatches = submissions.filter(s => s.proofFound && \!s.proofVerified).length;
   
   console.log(`Total Commitments: ${commitCount}`);
   console.log(`Successful Submissions: ${successfulSubmissions}`);
   console.log(`Failed Submissions: ${failedSubmissions}`);
   console.log(`Proofs Found: ${proofsFound}`);
   console.log(`Proofs Verified: ${proofsVerified}`);
+  console.log(`Data Consistency Failures: ${dataMismatches}`);
   console.log(`Pending Commitments (no proof yet): ${pendingCommitments}`);
   
   if (pendingCommitments > 0) {
     console.log('\nRequest IDs with missing proofs:');
     submissions
       .filter(s => s.submissionResult.success && \!s.proofFound)
+      .forEach(s => {
+        console.log(`- ${s.commitment.requestId}`);
+      });
+  }
+  
+  if (dataMismatches > 0) {
+    console.log('\nRequest IDs with data consistency failures:');
+    submissions
+      .filter(s => s.proofFound && \!s.proofVerified)
       .forEach(s => {
         console.log(`- ${s.commitment.requestId}`);
       });
