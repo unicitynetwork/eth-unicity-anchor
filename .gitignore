@@ -34,3 +34,15 @@ ts-client/deploy-output.txt
 ts-client/perf-test-output.txt
 ts-client/temp-deploy.js
 temp_repos
+
+# Gateway test files
+gateway-port.txt
+gateway-test-results-*.json
+test-output.txt
+*.bac
+*.orig
+*.rej
+*.patch
+anvil.pid
+temp-*
+*debug-*
