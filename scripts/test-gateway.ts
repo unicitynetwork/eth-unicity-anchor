@@ -203,6 +203,10 @@ async function submitCommitment(gatewayUrl: string, commitment: Commitment): Pro
     console.log(`Headers: Content-Type: application/json`);
     console.log(`Payload: ${JSON.stringify(payload, null, 2)}`);
     
+    // Log the complete commitment data structure for debugging
+    console.log(`\n🔍 FULL COMMITMENT DATA:`);
+    console.log(JSON.stringify(commitment, null, 2));
+    
     // Make the request
     const response = await axios.post(requestUrl, payload);
     
@@ -300,6 +304,11 @@ async function getInclusionProof(gatewayUrl: string, requestId: string): Promise
     }
     
     console.log(`\n✅ Successfully retrieved proof for request ID: ${requestId}`);
+    
+    // Log the complete proof data structure for debugging
+    console.log(`\n🔍 FULL PROOF DATA RECEIVED:`);
+    console.log(JSON.stringify(response.data.result, null, 2));
+    
     return {
       success: true,
       proof: response.data.result
