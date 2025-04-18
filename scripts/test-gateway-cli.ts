@@ -76,14 +76,30 @@ async function submitCommitment(gateway: string, commitment: any) {
     console.log('Submitting commitment...');
     // Extract only the fields needed for the submission
     const { requestId, transactionHash, authenticator } = commitment;
-    const response = await axios.post(gateway, {
+    
+    // Create payload for the request
+    const payload = {
       jsonrpc: '2.0',
       method: 'submit_commitment',
       params: { requestId, transactionHash, authenticator },
       id: 1
-    });
+    };
     
+    // Log the complete commitment data structure for debugging
+    console.log('\n🔍 FULL COMMITMENT DATA:');
+    console.log(JSON.stringify(commitment, null, 2));
+    
+    console.log('\n📡 SENDING REQUEST:');
+    console.log(`URL: ${gateway}`);
+    console.log(`Method: POST`);
+    console.log(`Payload: ${JSON.stringify(payload, null, 2)}`);
+    
+    const response = await axios.post(gateway, payload);
+    
+    console.log('\n📩 RESPONSE RECEIVED:');
+    console.log(`Status: ${response.status} ${response.statusText}`);
     console.log('Response:', JSON.stringify(response.data.result || response.data, null, 2));
+    
     return response.data;
   } catch (error: any) {
     console.error('Error submitting commitment:', error.message);
@@ -97,12 +113,24 @@ async function submitCommitment(gateway: string, commitment: any) {
 async function getInclusionProof(gateway: string, requestId: string, origRequestIdObj?: RequestId) {
   try {
     console.log(`Checking for inclusion proof for request ID: ${requestId}`);
-    const response = await axios.post(gateway, {
+    
+    // Create payload for the request
+    const payload = {
       jsonrpc: '2.0',
       method: 'get_inclusion_proof',
       params: { requestId },
       id: 1
-    });
+    };
+    
+    console.log('\n📡 SENDING PROOF REQUEST:');
+    console.log(`URL: ${gateway}`);
+    console.log(`Method: POST`);
+    console.log(`Payload: ${JSON.stringify(payload, null, 2)}`);
+    
+    const response = await axios.post(gateway, payload);
+    
+    console.log('\n📩 PROOF RESPONSE RECEIVED:');
+    console.log(`Status: ${response.status} ${response.statusText}`);
     
     if (response.data.error) {
       console.error('Error in proof response:', response.data.error);
@@ -138,6 +166,10 @@ async function getInclusionProof(gateway: string, requestId: string, origRequest
     // Parse the proof response - could be in result or directly in data
     const proofData = hasJsonRpcFormat ? response.data.result : response.data;
     
+    // Log the complete proof data structure for debugging
+    console.log('\n🔍 FULL PROOF DATA RECEIVED:');
+    console.log(JSON.stringify(proofData, null, 2));
+    
     try {
       // Convert the proof data to an InclusionProof object
       const proof = InclusionProof.fromDto(proofData);
@@ -156,8 +188,33 @@ async function getInclusionProof(gateway: string, requestId: string, origRequest
         
         // Debug authenticator verification separately
         console.log('Verifying authenticator...');
+        
+        // Check if transaction hash has the "0000" prefix
+        const txHashHex = proof.transactionHash.toDto();
+        console.log(`Transaction hash: ${txHashHex}`);
+        if (!txHashHex.startsWith('0000')) {
+          console.log('⚠️ Transaction hash is missing "0000" prefix, this may cause verification to fail');
+        }
+        
+        // Log authenticator details
+        const authDto = proof.authenticator.toDto();
+        console.log('Authenticator details:');
+        console.log(`- Public key: ${authDto.publicKey.substring(0, 16)}...`);
+        console.log(`- State hash: ${authDto.stateHash.substring(0, 16)}...`);
+        console.log(`- Signature: ${authDto.signature.substring(0, 16)}...${authDto.signature.substring(authDto.signature.length - 16)}`);
+        
+        // Perform authentication verification
         authVerification = await proof.authenticator.verify(proof.transactionHash);
         console.log(`Authenticator verification result: ${authVerification ? 'Success ✅' : 'Failed ❌'}`);
+        
+        // If verification failed, try adding "0000" prefix to transaction hash
+        if (!authVerification && !txHashHex.startsWith('0000')) {
+          console.log('Trying verification with "0000" prefix added to transaction hash...');
+          // Create a new transaction hash with prefix
+          const fixedTxHash = DataHash.fromDto('0000' + txHashHex);
+          const fixedVerification = await proof.authenticator.verify(fixedTxHash);
+          console.log(`Verification with fixed transaction hash: ${fixedVerification ? 'Success ✅' : 'Still failed ❌'}`);
+        }
         
         // Verify the merkle tree path
         console.log('Verifying merkle tree path...');
@@ -268,6 +325,64 @@ async function main() {
           if (result && result.result !== null) {
             proofFound = true;
             console.log(`\n🎉 SUCCESS: Inclusion proof found!`);
+            
+            // Compare the received data with what we originally sent for consistency check
+            console.log('\n🔍 CONSISTENCY CHECK - Comparing sent vs received data:');
+            
+            // Get the received transaction hash and authenticator
+            const receivedData = result.result || result;
+            const originalTxHash = commitment.transactionHash;
+            let receivedTxHash = receivedData.transactionHash;
+            
+            // Handle prefix differences for comparison
+            if (receivedTxHash && originalTxHash) {
+              // Normalize transaction hashes for comparison (handle prefix differences)
+              const normalizedOriginal = originalTxHash.startsWith('0000') ? originalTxHash.substring(4) : originalTxHash;
+              const normalizedReceived = receivedTxHash.startsWith('0000') ? receivedTxHash.substring(4) : receivedTxHash;
+              
+              // Check transaction hash match
+              const txHashMatches = normalizedOriginal === normalizedReceived;
+              console.log(`Transaction hash match: ${txHashMatches ? '✅ YES' : '❌ NO'}`);
+              if (!txHashMatches) {
+                console.log(`  - Original: ${originalTxHash}`);
+                console.log(`  - Received: ${receivedTxHash}`);
+                console.log(`  - Normalized original: ${normalizedOriginal}`);
+                console.log(`  - Normalized received: ${normalizedReceived}`);
+              }
+            }
+            
+            // Check authenticator
+            if (receivedData.authenticator && commitment.authenticator) {
+              const authReceived = receivedData.authenticator;
+              const authOriginal = commitment.authenticator;
+              
+              const pubKeyMatches = authReceived.publicKey === authOriginal.publicKey;
+              const signatureMatches = authReceived.signature === authOriginal.signature;
+              let stateHashMatches = authReceived.stateHash === authOriginal.stateHash;
+              
+              // Handle possible prefix differences in state hash
+              if (!stateHashMatches && authReceived.stateHash && authOriginal.stateHash) {
+                const normalizedOriginal = authOriginal.stateHash.startsWith('0000') ? 
+                  authOriginal.stateHash.substring(4) : authOriginal.stateHash;
+                const normalizedReceived = authReceived.stateHash.startsWith('0000') ? 
+                  authReceived.stateHash.substring(4) : authReceived.stateHash;
+                
+                stateHashMatches = normalizedOriginal === normalizedReceived;
+              }
+              
+              console.log(`Authenticator comparison:`);
+              console.log(`  - Public key match: ${pubKeyMatches ? '✅ YES' : '❌ NO'}`);
+              console.log(`  - Signature match: ${signatureMatches ? '✅ YES' : '❌ NO'}`);
+              console.log(`  - State hash match: ${stateHashMatches ? '✅ YES' : '❌ NO'}`);
+              
+              if (!pubKeyMatches || !signatureMatches || !stateHashMatches) {
+                console.log('\nAuthenticator details:');
+                console.log('Original:');
+                console.log(JSON.stringify(authOriginal, null, 2));
+                console.log('Received:');
+                console.log(JSON.stringify(authReceived, null, 2));
+              }
+            }
             
             // Print all the properties from the result for debugging
             console.log('\nVerification result details:');
