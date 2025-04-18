@@ -700,7 +700,9 @@ describe('HTTP Gateway to Smart Contract E2E Integration Tests', () => {
   });
   
   // Test 4: Process a batch with SMT and get inclusion proof
+  // Increased timeout to 3 minutes to accommodate the more robust but slower batch processing
   it('should process a batch with SMT and get an inclusion proof', async () => {
+    // Timeout is set in Jest configuration in jest.integration.config.js to 3 minutes (180000ms)
     if (!contractAddress) {
       console.log('Skipping test due to missing CONTRACT_ADDRESS');
       return;
@@ -1512,58 +1514,127 @@ describe('HTTP Gateway to Smart Contract E2E Integration Tests', () => {
     // Process all batches between the last processed batch and our explicit batch
     const latestProcessedBatch = await nodeClient.getLatestProcessedBatchNumber();
     
+    // IMPROVED SEQUENTIAL BATCH PROCESSING:
+    // Process each batch in strict sequence with verification to avoid race conditions
     for (let i = Number(latestProcessedBatch) + 1; i <= Number(explicitBatchNumber); i++) {
       const batchToProcess = BigInt(i);
       
+      console.log(`Handling batch ${batchToProcess} in sequence (${i-Number(latestProcessedBatch)}/${Number(explicitBatchNumber)-Number(latestProcessedBatch)})`);
+      
       try {
-        // First check if this batch exists
+        // 1. First check if this batch exists, create it if not
+        let batchExists = false;
         try {
-          const batchExists = await gatewayClient.getBatch(batchToProcess);
-          console.log(`Batch ${batchToProcess} exists: ${!!batchExists}`);
-          
-          if (!batchExists) {
-            console.log(`Batch ${batchToProcess} doesn't exist, creating a filler batch...`);
-            
-            // Create a filler batch with this number if it doesn't exist
-            const fillerCommitment = {
-              requestID: BigInt(Date.now() + 10000 + i),
-              payload: Buffer.from(`filler-${i}`),
-              authenticator: Buffer.from(`filler-auth-${i}`)
-            };
-            
-            await gatewayClient.submitAndCreateBatchWithNumber(
-              [fillerCommitment],
-              batchToProcess
-            );
-          }
+          const batchInfo = await gatewayClient.getBatch(batchToProcess);
+          batchExists = !!batchInfo;
+          console.log(`Batch ${batchToProcess} exists: ${batchExists}`);
         } catch (error) {
-          console.log(`Error checking batch ${batchToProcess}, creating a filler batch...`);
+          console.log(`Batch ${batchToProcess} does not exist or error occurred: ${error}`);
+          batchExists = false;
+        }
+        
+        if (!batchExists) {
+          console.log(`Creating filler batch ${batchToProcess}...`);
           
-          // Create a filler batch with this number if it doesn't exist or there was an error
+          // Create a unique filler commitment with current timestamp to avoid ID collisions
           const fillerCommitment = {
-            requestID: BigInt(Date.now() + 10000 + i),
-            payload: Buffer.from(`filler-${i}`),
-            authenticator: Buffer.from(`filler-auth-${i}`)
+            requestID: BigInt(Date.now() + 100000 + i),
+            payload: Buffer.from(`filler-${i}-${Date.now()}`),
+            authenticator: Buffer.from(`filler-auth-${i}-${Date.now()}`)
           };
           
+          // Create the batch with explicit number
           await gatewayClient.submitAndCreateBatchWithNumber(
             [fillerCommitment],
             batchToProcess
           );
+          
+          // Verify the batch was created
+          try {
+            const createdBatch = await gatewayClient.getBatch(batchToProcess);
+            console.log(`Verified batch ${batchToProcess} was created with ${createdBatch?.requests?.length || 0} requests`);
+            if (!createdBatch || !createdBatch.requests || createdBatch.requests.length === 0) {
+              throw new Error(`Batch ${batchToProcess} was created but has no requests`);
+            }
+          } catch (error) {
+            console.error(`Failed to verify creation of batch ${batchToProcess}: ${error}`);
+            // Don't continue if we can't verify the batch was created
+            throw new Error(`Cannot continue without verified batch ${batchToProcess}`);
+          }
         }
         
-        // Process the batch (don't worry if it fails, we just need to make progress)
-        const processingHashroot = ethers.toUtf8Bytes(`test hashroot for batch ${i}`);
+        // 2. Process this batch and wait for it to be fully processed before continuing
+        const processingHashroot = ethers.toUtf8Bytes(`test-hashroot-for-batch-${i}-${Date.now()}`);
+        
+        // Check if batch is already processed
+        let alreadyProcessed = false;
         try {
-          console.log(`Processing batch ${batchToProcess}...`);
-          await nodeClient.submitHashroot(batchToProcess, processingHashroot);
-          console.log(`Successfully processed batch ${batchToProcess}`);
+          const batchInfo = await gatewayClient.getBatch(batchToProcess);
+          alreadyProcessed = batchInfo.processed;
+          if (alreadyProcessed) {
+            console.log(`Batch ${batchToProcess} is already processed, skipping processing`);
+          }
         } catch (error) {
-          console.log(`Error processing batch ${batchToProcess}: ${error}`);
-          // Continue with the next batch
+          console.warn(`Error checking if batch ${batchToProcess} is processed: ${error}`);
         }
+        
+        if (!alreadyProcessed) {
+          // Process the batch with explicit verification loop
+          console.log(`Processing batch ${batchToProcess}...`);
+          
+          try {
+            // Submit hashroot
+            await nodeClient.submitHashroot(batchToProcess, processingHashroot);
+            
+            // Verify the batch is processed by checking with the contract
+            let verified = false;
+            let verifyAttempts = 5;
+            
+            console.log(`Verifying batch ${batchToProcess} processing...`);
+            
+            while (!verified && verifyAttempts > 0) {
+              try {
+                // Check the batch is processed directly from the contract
+                const contract = (gatewayClient as any).contract;
+                const [_, processed, _hashroot] = await contract.getBatch(batchToProcess);
+                
+                if (processed) {
+                  verified = true;
+                  console.log(`✓ Batch ${batchToProcess} verified as processed on-chain`);
+                } else {
+                  verifyAttempts--;
+                  console.log(`Batch ${batchToProcess} not yet processed. Retries left: ${verifyAttempts}`);
+                  await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second between checks
+                }
+              } catch (error) {
+                verifyAttempts--;
+                console.warn(`Error verifying batch ${batchToProcess}: ${error}`);
+                await new Promise(resolve => setTimeout(resolve, 1000));
+              }
+            }
+            
+            if (!verified) {
+              throw new Error(`Failed to verify batch ${batchToProcess} processing after multiple attempts`);
+            }
+            
+          } catch (error) {
+            console.error(`Error processing batch ${batchToProcess}: ${error}`);
+            throw new Error(`Failed to process batch ${batchToProcess}: ${error}`);
+          }
+        }
+        
+        // 3. Always query the latest processed batch before continuing to ensure sequence
+        const currentProcessed = await nodeClient.getLatestProcessedBatchNumber();
+        if (currentProcessed < batchToProcess) {
+          throw new Error(`Batch sequence violation: Expected batch ${batchToProcess} to be processed, but latest processed is ${currentProcessed}`);
+        }
+        
+        console.log(`Successfully processed batch ${batchToProcess} in sequence`);
+        
       } catch (error) {
-        console.error(`Error handling batch ${batchToProcess}:`, error);
+        console.error(`Critical error in batch sequence for batch ${batchToProcess}:`, error);
+        // Do not continue if there's an error in the sequence
+        throw new Error(`Batch sequence processing failed at batch ${batchToProcess}: ${error}`);
       }
     }
     

@@ -134,6 +134,13 @@ export interface TransactionResult {
    * enough aggregator votes without a hashroot mismatch
    */
   waitForConsensus?: boolean;
+  
+  /**
+   * Indicates that we're waiting for a previous batch to be fully processed
+   * This is used when we detect a batch in the sequence that exists but isn't 
+   * marked as processed yet, preventing processing of subsequent batches
+   */
+  waitForPrevious?: boolean;
 }
 
 /**
@@ -160,3 +167,53 @@ export enum EventType {
  * Event callback interface
  */
 export type EventCallback = (eventType: EventType, data: any) => void;
+
+/**
+ * Transaction queue entry for sequential processing
+ */
+export interface TransactionQueueEntry {
+  /**
+   * Method name to be called on the contract
+   */
+  method: string;
+  
+  /**
+   * Arguments to pass to the method
+   */
+  args: any[];
+  
+  /**
+   * Unique identifier for the transaction (e.g. batchNumber for batch processing)
+   */
+  id: string;
+  
+  /**
+   * Type of transaction for logging and priority handling
+   */
+  type: 'HASHROOT_VOTE' | 'BATCH_CREATION' | 'COMMITMENT' | 'ADMIN' | 'OTHER';
+  
+  /**
+   * Optional callback to be called after transaction is confirmed
+   */
+  onComplete?: (result: TransactionResult) => void;
+  
+  /**
+   * Should transaction wait for confirmations
+   */
+  confirmations?: number;
+  
+  /**
+   * Timestamp when the transaction was queued
+   */
+  timestamp: number;
+  
+  /**
+   * Indicates if this transaction requires confirmation before proceeding with next batch processing
+   */
+  requireConfirmation?: boolean;
+  
+  /**
+   * Transaction result (set after execution)
+   */
+  result?: TransactionResult;
+}

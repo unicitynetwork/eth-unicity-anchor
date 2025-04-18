@@ -7,8 +7,8 @@ module.exports = {
   ...baseConfig,
   // Only run integration tests
   testMatch: ['**/tests/integration/**/*.test.ts'],
-  // Increase timeout for integration tests to 120 seconds
-  testTimeout: 120000,
+  // Increase timeout for integration tests to 180 seconds (3 minutes)
+  testTimeout: 180000,
   // Setup file specific to integration tests
   setupFilesAfterEnv: ['./jest.integration.setup.js'],
   // Integration tests are not included in coverage reports by default

@@ -893,6 +893,7 @@ contract AggregatorBatches is IAggregatorBatches {
      * 1. Batches must be processed sequentially; can't skip any batch
      * 2. Each aggregator can vote only once per (batch, hashroot) combination
      * 3. Batch is processed when requiredAggregatorVotes is reached for the same hashroot
+     * 4. If the batch is already processed but with the same hashroot, accept silently
      */
     function submitHashroot(uint256 batchNumber, bytes calldata hashroot)
         external
@@ -903,7 +904,23 @@ contract AggregatorBatches is IAggregatorBatches {
         // Basic validation
         require(batchNumber > 0 && batchNumber <= highestBatchNumber, "Invalid batch number");
         require(batches[batchNumber].batchNumber != 0, "Batch does not exist");
-        require(!batches[batchNumber].processed, "Batch already processed");
+
+        // If batch is processed, check if it has the same hashroot we're trying to submit
+        if (batches[batchNumber].processed) {
+            // Compare the existing hashroot with what we're trying to submit
+            // If it's the same, accept silently (useful for retries and redundant submissions)
+            // If different, revert with a clear error message
+            bytes memory existingHashroot = batches[batchNumber].hashroot;
+            bool isSameHashroot = keccak256(existingHashroot) == keccak256(hashroot);
+            
+            // If same hashroot, silently accept the submission - supporting retries and fault tolerance
+            if (isSameHashroot) {
+                return true;
+            } else {
+                // Different hashroot - this is a serious issue, reject clearly
+                revert("Cannot submit different hashroot for already processed batch");
+            }
+        }
 
         // Ensure batch processing happens sequentially
         // The batch to be processed must be exactly the next one after the last processed batch

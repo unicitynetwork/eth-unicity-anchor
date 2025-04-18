@@ -22,6 +22,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Test utils only: `cd ts-client && npm run test:utils`
 - Lint: `cd ts-client && npm run lint`
 - Format code: `cd ts-client && npm run format`
+- Gateway server: `node start-gateway.js` or `ts-client/src/run-gateway-server.ts`
+- Gateway testing: `node scripts/test-gateway.js` or `./scripts/test-gateway-e2e.sh`
 
 ## CI/CD Commands
 - Local test workflow: `./scripts/run-ci-locally.sh --workflow=test`
@@ -29,6 +31,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - E2E testing: `./scripts/manual-e2e-test.sh`
 - Batch testing: `./run-batch-test.sh`
 - Performance testing: `./run-perf-test.sh`
+- Sync testing: `./scripts/sync-test.sh`
 
 ## Code Style Guidelines
 - **Solidity**: 
@@ -40,18 +43,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Structure**: License → Pragma → Imports (external first) → Interfaces → Libraries → Contracts
 - **Functions**: Order by visibility (external → public → internal → private)
 - **Naming**: 
-  - PascalCase: Contracts, interfaces, libraries, events
-  - camelCase: Functions, arguments, local variables
+  - PascalCase: Contracts, interfaces, libraries, events, types, classes
+  - camelCase: Functions, arguments, local variables, methods, properties
   - UPPER_CASE: Constants, immutables
   - Prefix interface names with "I" (e.g., IAggregatorBatches)
 
 - **TypeScript**: 
-  - Strong typing (no any), async/await (not promises), comprehensive test coverage
-  - Use TypeScript's type system fully, including interfaces and type aliases
-  - Node engine requirement: >= 20.0.0
-  - Keep utility functions pure and well-tested
-  - Use ethers v6 for blockchain interactions
+  - Strong typing (avoid `any`), async/await (prefer over promises)
+  - Use TypeScript's type system fully: interfaces, type aliases, generics
+  - Node engine: >= 20.0.0, use ethers v6 for blockchain interactions
+  - Utility functions should be pure and extensively tested
+  - Follow functional programming principles where appropriate
   
+- **Error Handling**:
+  - Solidity: Use custom errors with descriptive names and parameters
+  - TypeScript: Use try/catch with specific error types, avoid generic catches
+  - Include proper error reporting and logging
+
 - **Security**: 
   - Follow OpenZeppelin patterns and use their libraries
   - Validate all inputs with require statements or custom errors

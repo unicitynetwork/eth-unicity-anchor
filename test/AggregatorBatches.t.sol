@@ -251,6 +251,137 @@ contract AggregatorBatchesTest is Test {
         assertEq(processed, true, "Batch should be processed");
         assertEq(string(storedHashroot), string(hashroot1), "Batch should use hashroot1");
     }
+    
+    /**
+     * @dev Test submitting hashroots to already processed batches
+     * This test verifies our logic for handling hashroot submissions for batches that are already processed:
+     * 1. If the submitted hashroot matches the already-stored value, it should succeed silently
+     * 2. If it's different, it should revert with a clear error
+     */
+    function testSubmitHashrootToProcessedBatch() public {
+        // Submit a commitment and create a batch
+        vm.prank(trustedAggregators[0]);
+        aggregator.submitCommitment(999, bytes("test payload"), bytes("test authenticator"));
+
+        vm.prank(trustedAggregators[0]);
+        uint256 batchNumber = aggregator.createBatch();
+
+        // Process the batch with 2 aggregator votes
+        bytes memory originalHashroot = bytes("original hashroot");
+        vm.prank(trustedAggregators[0]);
+        aggregator.submitHashroot(batchNumber, originalHashroot);
+        
+        vm.prank(trustedAggregators[1]);
+        aggregator.submitHashroot(batchNumber, originalHashroot);
+
+        // Verify the batch is now processed
+        (, bool processed, bytes memory storedHashroot) = aggregator.getBatch(batchNumber);
+        assertEq(processed, true, "Batch should be processed after 2 votes");
+        assertEq(string(storedHashroot), string(originalHashroot), "Stored hashroot should match original");
+
+        // CASE 1: Submit the same hashroot again to an already processed batch
+        // This should silently succeed as a no-op
+        vm.prank(trustedAggregators[0]);
+        bool success = aggregator.submitHashroot(batchNumber, originalHashroot);
+        assertEq(success, true, "Submitting same hashroot to processed batch should succeed");
+
+        // Verify nothing changed
+        (, bool stillProcessed, bytes memory stillSameHashroot) = aggregator.getBatch(batchNumber);
+        assertEq(stillProcessed, true, "Batch should still be processed");
+        assertEq(string(stillSameHashroot), string(originalHashroot), "Hashroot should still match original");
+
+        // CASE 2: Submit a different hashroot to an already processed batch
+        // This should revert with specific error message
+        bytes memory differentHashroot = bytes("different hashroot");
+        vm.expectRevert("Cannot submit different hashroot for already processed batch");
+        vm.prank(trustedAggregators[0]);
+        aggregator.submitHashroot(batchNumber, differentHashroot);
+
+        // Verify the batch still has the original hashroot
+        (, bool finalProcessed, bytes memory finalHashroot) = aggregator.getBatch(batchNumber);
+        assertEq(finalProcessed, true, "Batch should be processed");
+        assertEq(string(finalHashroot), string(originalHashroot), "Hashroot should remain unchanged");
+    }
+    
+    /**
+     * @dev Test the aggregator vote inspection functions
+     * This test verifies the functionality of:
+     * - hasAggregatorVotedForHashroot - checks if an aggregator voted for a specific hashroot
+     * - getAggregatorVoteForBatch - gets the hashroot an aggregator voted for (if any)
+     */
+    function testAggregatorVoteInspection() public {
+        // Submit a commitment and create a batch
+        vm.prank(trustedAggregators[0]);
+        aggregator.submitCommitment(888, bytes("vote inspection test"), bytes("auth"));
+
+        vm.prank(trustedAggregators[0]);
+        uint256 batchNumber = aggregator.createBatch();
+
+        // Define two different hashroots
+        bytes memory hashroot1 = bytes("hashroot version 1");
+        bytes memory hashroot2 = bytes("hashroot version 2");
+        
+        // Initial state: no aggregator has voted yet
+        bool voted;
+        bool hasVoted;
+        bytes memory votedHashroot;
+        
+        // Check if aggregator0 has voted for hashroot1 (should be false)
+        voted = aggregator.hasAggregatorVotedForHashroot(batchNumber, hashroot1, trustedAggregators[0]);
+        assertEq(voted, false, "Aggregator0 should not have voted yet");
+        
+        // Check getAggregatorVoteForBatch (should return false, empty)
+        (hasVoted, votedHashroot) = aggregator.getAggregatorVoteForBatch(batchNumber, trustedAggregators[0]);
+        assertEq(hasVoted, false, "Aggregator0 should not have voted yet");
+        assertEq(votedHashroot.length, 0, "Voted hashroot should be empty");
+        
+        // Now aggregator0 votes for hashroot1
+        vm.prank(trustedAggregators[0]);
+        aggregator.submitHashroot(batchNumber, hashroot1);
+        
+        // Verify aggregator0 voted for hashroot1
+        voted = aggregator.hasAggregatorVotedForHashroot(batchNumber, hashroot1, trustedAggregators[0]);
+        assertEq(voted, true, "Aggregator0 should have voted for hashroot1");
+        
+        // Verify aggregator0 did NOT vote for hashroot2
+        voted = aggregator.hasAggregatorVotedForHashroot(batchNumber, hashroot2, trustedAggregators[0]);
+        assertEq(voted, false, "Aggregator0 should not have voted for hashroot2");
+        
+        // Check getAggregatorVoteForBatch returns the correct vote
+        (hasVoted, votedHashroot) = aggregator.getAggregatorVoteForBatch(batchNumber, trustedAggregators[0]);
+        assertEq(hasVoted, true, "Aggregator0 should have voted");
+        assertEq(string(votedHashroot), string(hashroot1), "Should return hashroot1 as the voted hashroot");
+        
+        // Now aggregator1 votes for hashroot2
+        vm.prank(trustedAggregators[1]);
+        aggregator.submitHashroot(batchNumber, hashroot2);
+        
+        // Verify aggregator1 voted for hashroot2
+        voted = aggregator.hasAggregatorVotedForHashroot(batchNumber, hashroot2, trustedAggregators[1]);
+        assertEq(voted, true, "Aggregator1 should have voted for hashroot2");
+        
+        // Check getAggregatorVoteForBatch for aggregator1
+        (hasVoted, votedHashroot) = aggregator.getAggregatorVoteForBatch(batchNumber, trustedAggregators[1]);
+        assertEq(hasVoted, true, "Aggregator1 should have voted");
+        assertEq(string(votedHashroot), string(hashroot2), "Should return hashroot2 as the voted hashroot");
+        
+        // Aggregator2 votes for hashroot1, which should reach consensus
+        vm.prank(trustedAggregators[2]);
+        aggregator.submitHashroot(batchNumber, hashroot1);
+        
+        // Verify the batch is now processed with hashroot1
+        (, bool processed, bytes memory finalHashroot) = aggregator.getBatch(batchNumber);
+        assertEq(processed, true, "Batch should be processed");
+        assertEq(string(finalHashroot), string(hashroot1), "Batch should use hashroot1");
+        
+        // Even though the batch is processed, we should still be able to check votes
+        voted = aggregator.hasAggregatorVotedForHashroot(batchNumber, hashroot1, trustedAggregators[2]);
+        assertEq(voted, true, "Aggregator2 should have voted for hashroot1");
+        
+        (hasVoted, votedHashroot) = aggregator.getAggregatorVoteForBatch(batchNumber, trustedAggregators[2]);
+        assertEq(hasVoted, true, "Aggregator2 should have voted");
+        assertEq(string(votedHashroot), string(hashroot1), "Should return hashroot1 as the voted hashroot");
+    }
 
     function testSequentialBatchProcessing() public {
         // Create 3 batches
@@ -760,6 +891,7 @@ contract AggregatorBatchesTest is Test {
         uint256 batchNumber = aggregator.createBatch();
 
         bytes memory hashroot = bytes("test hashroot");
+        bytes memory differentHashroot = bytes("different hashroot");
 
         // Process the batch
         vm.prank(trustedAggregators[0]);
@@ -767,10 +899,20 @@ contract AggregatorBatchesTest is Test {
         vm.prank(trustedAggregators[1]);
         aggregator.submitHashroot(batchNumber, hashroot);
 
-        // Try to submit hashroot for already processed batch
+        // Verify the batch is processed
+        (, bool processed, bytes memory storedHashroot) = aggregator.getBatch(batchNumber);
+        assertEq(processed, true, "Batch should be processed");
+        assertEq(string(storedHashroot), string(hashroot), "Stored hashroot should match");
+
+        // Try to submit same hashroot for already processed batch - should succeed silently
         vm.prank(trustedAggregators[2]);
-        vm.expectRevert("Batch already processed");
-        aggregator.submitHashroot(batchNumber, hashroot);
+        bool success = aggregator.submitHashroot(batchNumber, hashroot);
+        assertEq(success, true, "Submitting same hashroot should succeed");
+
+        // Try to submit different hashroot for already processed batch - should revert
+        vm.prank(trustedAggregators[2]);
+        vm.expectRevert("Cannot submit different hashroot for already processed batch");
+        aggregator.submitHashroot(batchNumber, differentHashroot);
     }
 
     function testVoteSameHashrootTwice() public {
@@ -1864,9 +2006,15 @@ contract AggregatorBatchesTest is Test {
         vm.prank(trustedAggregators[1]);
         aggregator.submitHashroot(batch3, hashroot);
 
-        // Now try to process batch 3 again - should revert with "already processed"
+        // Now try to process batch 3 again with the same hashroot - should succeed silently
         vm.prank(trustedAggregators[0]);
-        vm.expectRevert("Batch already processed");
-        aggregator.submitHashroot(batch3, hashroot);
+        bool success = aggregator.submitHashroot(batch3, hashroot);
+        assertEq(success, true, "Submitting same hashroot should succeed");
+        
+        // Try to process batch 3 with a different hashroot - should revert
+        bytes memory differentHashroot = bytes("different hashroot");
+        vm.prank(trustedAggregators[0]);
+        vm.expectRevert("Cannot submit different hashroot for already processed batch");
+        aggregator.submitHashroot(batch3, differentHashroot);
     }
 }
