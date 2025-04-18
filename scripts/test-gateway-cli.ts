@@ -131,14 +131,31 @@ async function getInclusionProof(gateway: string, requestId: string, origRequest
       // Track if we applied a fix
       let fixApplied = false;
       
+      // Debug the raw data received
+      console.log(`DEBUG: Raw proof data received from gateway:`);
+      console.log(`- RequestId: ${proofData.requestId}`);
+      console.log(`- Transaction Hash: ${proofData.transactionHash}`);
+      if (proofData.merkleTreePath) {
+        console.log(`- Merkle Tree Root: ${proofData.merkleTreePath.root}`);
+        console.log(`- Merkle Tree Steps: ${JSON.stringify(proofData.merkleTreePath.steps)}`);
+      }
+      
       // Check and fix transaction hash prefix before creating the InclusionProof
       if (proofData.transactionHash && !proofData.transactionHash.startsWith('0000')) {
         proofData.transactionHash = '0000' + proofData.transactionHash;
         fixApplied = true;
+        console.log(`DEBUG: Applied fix - added '0000' prefix to transaction hash`);
       }
       
       // Convert the proof data (with fixed hash) to an InclusionProof object
-      const proof = InclusionProof.fromDto(proofData);
+      let proof;
+      try {
+        proof = InclusionProof.fromDto(proofData);
+        console.log(`DEBUG: Successfully created InclusionProof object from DTO`);
+      } catch (error) {
+        console.log(`DEBUG: Error creating InclusionProof: ${error.message}`);
+        throw error;
+      }
       
       // Create a RequestId object from the request ID string
       const requestIdObj = origRequestIdObj || await RequestId.fromDto(requestId);
@@ -151,14 +168,42 @@ async function getInclusionProof(gateway: string, requestId: string, origRequest
         // Convert request ID to BigInt for Merkle tree verification
         const requestIdBigInt = requestIdObj.toBigInt();
         
+        // Log RequestId details for debugging merkle path issues
+        console.log(`DEBUG: Request ID as BigInt: ${requestIdBigInt}`);
+        console.log(`DEBUG: Request ID as Hex: ${requestId}`);
+        
         // Perform authenticator verification
         authVerification = await proof.authenticator.verify(proof.transactionHash);
         
-        // Verify the merkle tree path
-        pathVerification = await proof.merkleTreePath.verify(requestIdBigInt);
+        // Verify the merkle tree path with detailed debug info
+        try {
+          pathVerification = await proof.merkleTreePath.verify(requestIdBigInt);
+          
+          // If path verification failed, log more details
+          if (!pathVerification.isPathValid || !pathVerification.isPathIncluded) {
+            console.log(`DEBUG: Merkle path verification failed`);
+            console.log(`DEBUG: Merkle tree root: ${proof.merkleTreePath.root}`);
+            if (proof.merkleTreePath.steps) {
+              console.log(`DEBUG: Number of steps in path: ${proof.merkleTreePath.steps.length}`);
+            }
+          }
+        } catch (pathError) {
+          console.log(`DEBUG: Exception in path verification: ${pathError.message}`);
+          // Create a failed pathVerification result
+          pathVerification = {
+            isPathValid: false,
+            isPathIncluded: false,
+            error: pathError.message
+          };
+        }
         
         // Verify the full proof
-        verificationResult = await proof.verify(requestIdBigInt);
+        try {
+          verificationResult = await proof.verify(requestIdBigInt);
+        } catch (verifyError) {
+          console.log(`DEBUG: Exception in full verification: ${verifyError.message}`);
+          verificationResult = 'ERROR: ' + verifyError.message;
+        }
       } catch (verifyError) {
         return {
           ...response.data,
@@ -301,6 +346,43 @@ async function main() {
                 console.log(`- Reason: Invalid Merkle path`);
               } else if (!result.pathVerification?.isPathIncluded) {
                 console.log(`- Reason: Request not included in Merkle tree`);
+              }
+              
+              // Show detailed debugging information when verification fails
+              console.log(`\n📌 DETAILED DEBUG INFO (VERIFICATION FAILURE):`);
+              
+              // What we sent
+              console.log(`\nSENT TO GATEWAY:`);
+              console.log(`- Request ID: ${commitment.requestId}`);
+              console.log(`- Transaction Hash: ${commitment.transactionHash}`);
+              console.log(`- Authenticator Public Key: ${commitment.authenticator.publicKey}`);
+              console.log(`- Authenticator State Hash: ${commitment.authenticator.stateHash}`);
+              console.log(`- Authenticator Signature: ${commitment.authenticator.signature.substring(0, 32)}...`);
+              
+              // What we received
+              const receivedData = result.result || result;
+              console.log(`\nRECEIVED FROM GATEWAY (after prefix fix if applied):`);
+              if (receivedData.transactionHash) {
+                console.log(`- Transaction Hash: ${receivedData.transactionHash}`);
+              }
+              
+              if (receivedData.authenticator) {
+                console.log(`- Authenticator Public Key: ${receivedData.authenticator.publicKey}`);
+                console.log(`- Authenticator State Hash: ${receivedData.authenticator.stateHash}`);
+                console.log(`- Authenticator Signature: ${receivedData.authenticator.signature.substring(0, 32)}...`);
+              }
+              
+              // For merkle path debug info
+              if (result.pathVerification) {
+                console.log(`\nMERKLE PATH VERIFICATION DETAILS:`);
+                console.log(`- Path Valid: ${result.pathVerification.isPathValid}`);
+                console.log(`- Path Included: ${result.pathVerification.isPathIncluded}`);
+                
+                // If we have access to the merkle path details
+                if (receivedData.merkleTreePath) {
+                  console.log(`- Root: ${receivedData.merkleTreePath.root || 'N/A'}`);
+                  console.log(`- Steps: ${Array.isArray(receivedData.merkleTreePath.steps) ? receivedData.merkleTreePath.steps.length : 0} steps`);
+                }
               }
             }
             
