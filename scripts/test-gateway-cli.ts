@@ -61,13 +61,23 @@ async function createAuthenticatorAndRequestId() {
   // Create a request ID from public key and state hash
   const requestId = await RequestId.create(publicKey, stateHash);
   const requestIdHex = Buffer.from(requestId.hash.imprint).toString('hex');
-  console.log(`Request ID: ${requestIdHex.slice(0, 10)}...`);
+  console.log(`Request ID: ${requestIdHex} (${requestIdHex.length} hex chars)`);
+  
+  // Log RequestId object details in human-friendly hex format
+  console.log('\nRequestId object details (hex format):');
+  console.log(`- Algorithm: ${requestId.hash.algorithm}`);
+  console.log(`- Hash imprint: ${Buffer.from(requestId.hash.imprint).toString('hex')}`);
+  console.log(`- Public key: ${Buffer.from(publicKey).toString('hex').substring(0, 16)}...`);
+  console.log(`- State hash imprint: ${Buffer.from(stateHash.imprint).toString('hex').substring(0, 16)}...`);
   
   return {
     requestId: requestIdHex,
     transactionHash: Buffer.from(transactionHash.imprint).toString('hex'),
     authenticator: authenticator.toDto(),
-    requestIdObj: requestId  // Return the original RequestId object for verification
+    requestIdObj: requestId,  // Return the original RequestId object for verification
+    // Add these fields for easier reference
+    publicKeyHex: Buffer.from(publicKey).toString('hex'),
+    stateHashHex: Buffer.from(stateHash.imprint).toString('hex')
   };
 }
 
@@ -182,26 +192,51 @@ async function getInclusionProof(gateway: string, requestId: string, origRequest
       let pathVerification;
       
       try {
-        // Show the request ID as BigInt for verification
+        // Show the request ID in multiple formats for verification
         const requestIdBigInt = requestIdObj.toBigInt();
-        console.log(`RequestId as BigInt: ${requestIdBigInt}`);
+        console.log('\nRequestId details:');
+        console.log(`- As BigInt: ${requestIdBigInt}`);
+        console.log(`- As Hex: ${Buffer.from(requestIdObj.hash.imprint).toString('hex')}`);
+        console.log(`- Algorithm: ${requestIdObj.hash.algorithm}`);
+        
+        // If this is an original request ID (not from DTO), show more details
+        if (origRequestIdObj) {
+          try {
+            console.log('\nOriginal RequestId source components:');
+            console.log(`- Public key (hex): ${commitment.publicKeyHex ? commitment.publicKeyHex.substring(0, 16) + '...' : 'N/A'}`);
+            console.log(`- State hash (hex): ${commitment.stateHashHex ? commitment.stateHashHex.substring(0, 16) + '...' : 'N/A'}`);
+          } catch (e) {
+            console.log('Could not display additional RequestId details:', e);
+          }
+        }
         
         // Debug authenticator verification separately
         console.log('Verifying authenticator...');
         
         // Check if transaction hash has the "0000" prefix
         const txHashHex = proof.transactionHash.toDto();
-        console.log(`Transaction hash: ${txHashHex}`);
+        console.log('\nTransaction hash details:');
+        console.log(`- Value: ${txHashHex}`);
+        console.log(`- Length: ${txHashHex.length} characters (${txHashHex.length/2} bytes)`);
+        console.log(`- Has '0000' prefix: ${txHashHex.startsWith('0000') ? 'Yes ✅' : 'No ❌'}`);
+        
         if (!txHashHex.startsWith('0000')) {
           console.log('⚠️ Transaction hash is missing "0000" prefix, this may cause verification to fail');
+          console.log(`- With prefix (for verification): 0000${txHashHex}`);
         }
         
         // Log authenticator details
         const authDto = proof.authenticator.toDto();
-        console.log('Authenticator details:');
-        console.log(`- Public key: ${authDto.publicKey.substring(0, 16)}...`);
-        console.log(`- State hash: ${authDto.stateHash.substring(0, 16)}...`);
-        console.log(`- Signature: ${authDto.signature.substring(0, 16)}...${authDto.signature.substring(authDto.signature.length - 16)}`);
+        console.log('\nAuthenticator details:');
+        console.log(`- Public key: ${authDto.publicKey}`);
+        console.log(`  Length: ${authDto.publicKey.length} characters (${authDto.publicKey.length/2} bytes)`);
+        
+        console.log(`- State hash: ${authDto.stateHash}`);
+        console.log(`  Length: ${authDto.stateHash.length} characters (${authDto.stateHash.length/2} bytes)`);
+        console.log(`  Has '0000' prefix: ${authDto.stateHash.startsWith('0000') ? 'Yes ✅' : 'No ❌'}`);
+        
+        console.log(`- Signature: ${authDto.signature.substring(0, 32)}...${authDto.signature.substring(authDto.signature.length - 32)}`);
+        console.log(`  Length: ${authDto.signature.length} characters (${authDto.signature.length/2} bytes)`);
         
         // Perform authentication verification
         authVerification = await proof.authenticator.verify(proof.transactionHash);
@@ -209,11 +244,35 @@ async function getInclusionProof(gateway: string, requestId: string, origRequest
         
         // If verification failed, try adding "0000" prefix to transaction hash
         if (!authVerification && !txHashHex.startsWith('0000')) {
-          console.log('Trying verification with "0000" prefix added to transaction hash...');
-          // Create a new transaction hash with prefix
-          const fixedTxHash = DataHash.fromDto('0000' + txHashHex);
-          const fixedVerification = await proof.authenticator.verify(fixedTxHash);
-          console.log(`Verification with fixed transaction hash: ${fixedVerification ? 'Success ✅' : 'Still failed ❌'}`);
+          console.log('\n🔧 ATTEMPTING FIX: Trying verification with "0000" prefix added to transaction hash...');
+          
+          try {
+            // Create a new transaction hash with prefix
+            const fixedTxHashString = '0000' + txHashHex;
+            console.log(`- Original tx hash: ${txHashHex}`);
+            console.log(`- Fixed tx hash: ${fixedTxHashString}`);
+            
+            const fixedTxHash = DataHash.fromDto(fixedTxHashString);
+            
+            // Log the DataHash details
+            console.log('Fixed DataHash details:');
+            console.log(`- Algorithm: ${fixedTxHash.algorithm}`);
+            console.log(`- Imprint (hex): ${Buffer.from(fixedTxHash.imprint).toString('hex')}`);
+            
+            // Try verification with fixed hash
+            const fixedVerification = await proof.authenticator.verify(fixedTxHash);
+            console.log(`\nVerification with fixed transaction hash: ${fixedVerification ? 'Success ✅' : 'Still failed ❌'}`);
+            
+            if (fixedVerification) {
+              console.log('✅ FIX SUCCESSFUL! Adding the "0000" prefix solved the verification issue.');
+              console.log('This confirms that the "0000" prefix is essential for correct authenticator verification.');
+            } else {
+              console.log('❌ FIX FAILED. Adding the "0000" prefix did not resolve the verification issue.');
+              console.log('This indicates there might be other differences between the authenticator formats.');
+            }
+          } catch (e) {
+            console.error('Error during fix attempt:', e);
+          }
         }
         
         // Verify the merkle tree path
