@@ -48,7 +48,7 @@ async function createAuthenticatorAndRequestId() {
   const requestId = await RequestId.create(publicKey, stateHash);
   const requestIdHex = Buffer.from(requestId.hash.imprint).toString('hex');
   
-  console.log(`Created commitment with request ID: ${requestIdHex.substring(0, 10)}...`);
+  console.log(`Created commitment with request ID: ${requestIdHex}`);
   console.log(`Transaction hash: ${txHashHex.substring(0, 10)}...`);
   
   return {
@@ -66,6 +66,8 @@ async function submitCommitment(gateway: string, commitment: any) {
   try {
     // Extract only the fields needed for the submission
     const { requestId, transactionHash, authenticator } = commitment;
+
+    console.log(" ### DEBUG: "+JSON.stringify(commitment, null, 4));
     
     // Create payload for the request
     const payload = {
@@ -174,6 +176,7 @@ async function getInclusionProof(gateway: string, requestId: string, origRequest
         // Perform authenticator verification
         try {
           authVerification = await proof.authenticator.verify(proof.transactionHash);
+	    console.log(" ### DEBUG authVerification: "+authVerification);
         } catch (authError) {
           authVerification = false;
         }
@@ -181,7 +184,7 @@ async function getInclusionProof(gateway: string, requestId: string, origRequest
         // Verify the merkle tree path
         try {
           pathVerification = await proof.merkleTreePath.verify(requestIdBigInt);
-          
+            console.log(" ### DEBUG pathVerification: "+JSON.stringify(pathVerification));
           // Store proper values (ensure they are booleans) in the result
           pathVerification = {
             isPathValid: pathVerification.isPathValid === true,
