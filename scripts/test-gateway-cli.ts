@@ -4,25 +4,19 @@
  * Tests using the @unicitylabs/commons library for request creation
  */
 
-import { Authenticator } from '@unicitylabs/commons/lib/api/Authenticator.js';
-import { InclusionProof, InclusionProofVerificationStatus } from '@unicitylabs/commons/lib/api/InclusionProof.js';
-import { RequestId } from '@unicitylabs/commons/lib/api/RequestId.js';
-import { DataHasher } from '@unicitylabs/commons/lib/hash/DataHasher.js';
-import { HashAlgorithm } from '@unicitylabs/commons/lib/hash/HashAlgorithm.js';
-import { SigningService } from '@unicitylabs/commons/lib/signing/SigningService.js';
 import axios from 'axios';
-import crypto from 'crypto';
-// Use direct relative paths to imports
-import { SigningService } from '../ts-client/node_modules/@unicitylabs/commons/lib/signing/SigningService.js';
-import { HashAlgorithm } from '../ts-client/node_modules/@unicitylabs/commons/lib/hash/HashAlgorithm.js';
-import { DataHash } from '../ts-client/node_modules/@unicitylabs/commons/lib/hash/DataHash.js';
-import { DataHasher } from '../ts-client/node_modules/@unicitylabs/commons/lib/hash/DataHasher.js';
-import { Authenticator } from '../ts-client/node_modules/@unicitylabs/commons/lib/api/Authenticator.js';
-import { RequestId } from '../ts-client/node_modules/@unicitylabs/commons/lib/api/RequestId.js';
-import { 
-  InclusionProof, 
-  InclusionProofVerificationStatus 
-} from '../ts-client/node_modules/@unicitylabs/commons/lib/api/InclusionProof.js';
+ import crypto from 'crypto';
+ // Use direct relative paths to imports
+ import { SigningService } from '../ts-client/node_modules/@unicitylabs/commons/lib/signing/SigningService.js';
+ import { HashAlgorithm } from '../ts-client/node_modules/@unicitylabs/commons/lib/hash/HashAlgorithm.js';
+ import { DataHash } from '../ts-client/node_modules/@unicitylabs/commons/lib/hash/DataHash.js';
+ import { DataHasher } from '../ts-client/node_modules/@unicitylabs/commons/lib/hash/DataHasher.js';
+ import { Authenticator } from '../ts-client/node_modules/@unicitylabs/commons/lib/api/Authenticator.js';
+ import { RequestId } from '../ts-client/node_modules/@unicitylabs/commons/lib/api/RequestId.js';
+ import { 
+   InclusionProof, 
+   InclusionProofVerificationStatus 
+ } from '../ts-client/node_modules/@unicitylabs/commons/lib/api/InclusionProof.js';
 
 // Parse command line arguments
 const gatewayUrl = process.argv[2] || 'https://gateway.unicity.network';
@@ -147,7 +141,7 @@ async function getInclusionProof(gateway: string, requestId: string, origRequest
       }
 
       // Check and fix transaction hash prefix before creating the InclusionProof
-      if (proofData.transactionHash && !proofData.transactionHash.startsWith('0000')) {
+/*      if (proofData.transactionHash && !proofData.transactionHash.startsWith('0000')) {
         proofData.transactionHash = '0000' + proofData.transactionHash;
         fixApplied = true;
       }
@@ -158,7 +152,7 @@ async function getInclusionProof(gateway: string, requestId: string, origRequest
         proofData.authenticator.stateHash = '0000' + proofData.authenticator.stateHash;
         fixApplied = true;
       }
-
+*/
       // Convert the proof data (with fixed hash) to an InclusionProof object
       let proof;
       try {
