@@ -67,7 +67,7 @@ async function submitCommitment(gateway: string, commitment: any) {
     // Extract only the fields needed for the submission
     const { requestId, transactionHash, authenticator } = commitment;
 
-    console.log(" ### DEBUG: "+JSON.stringify(commitment, null, 4));
+//    console.log(" ### DEBUG: "+JSON.stringify(commitment, null, 4));
 
     // Create payload for the request
     const payload = {
@@ -176,7 +176,7 @@ async function getInclusionProof(gateway: string, requestId: string, origRequest
         // Perform authenticator verification
         try {
           authVerification = await proof.authenticator.verify(proof.transactionHash);
-	    console.log(" ### DEBUG authVerification: "+authVerification);
+//	    console.log(" ### DEBUG authVerification: "+authVerification);
         } catch (authError) {
           authVerification = false;
         }
@@ -184,7 +184,7 @@ async function getInclusionProof(gateway: string, requestId: string, origRequest
         // Verify the merkle tree path
         try {
           pathVerification = await proof.merkleTreePath.verify(requestIdBigInt);
-            console.log(" ### DEBUG pathVerification: "+JSON.stringify(pathVerification));
+//            console.log(" ### DEBUG pathVerification: "+JSON.stringify(pathVerification));
 
             const textEncoder = new TextEncoder();
           const leafValue = await new DataHasher(HashAlgorithm.SHA256)

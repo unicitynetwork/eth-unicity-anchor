@@ -23,17 +23,28 @@ pragma solidity ^0.8.13;
  *  - submit updated hashroot of the aggregator tree from processing the batch with the number
  *
  * Request commitment fields
- *  - requestID - uint256 integer representing unique request id
+ *  - requestID - bytes type representing unique request id
  *  - payload - a byte sequence value
  *  - authenticator - a byte sequence arbitrary value
  *
  */
 interface IAggregatorBatches {
     /**
+     * @dev RequestId is represented as bytes for arbitrary length
+     * We use bytes directly rather than a custom type since Solidity
+     * doesn't allow user-defined value types to be based on reference types like bytes
+     */
+    
+    /**
+     * @dev HashRoot is represented as bytes for arbitrary length
+     * We use bytes directly rather than a custom type
+     */
+    
+    /**
      * @dev Struct for representing a commitment request
      */
     struct CommitmentRequest {
-        uint256 requestID;
+        bytes requestID;
         bytes payload;
         bytes authenticator;
     }
@@ -45,7 +56,7 @@ interface IAggregatorBatches {
      */
     struct Batch {
         uint256 batchNumber;
-        uint256[] requestIds;
+        bytes[] requestIds;
         bytes hashroot;
         bool processed;
     }
@@ -58,7 +69,7 @@ interface IAggregatorBatches {
      * Reverts if the operation was not successful. You cannot submit commitments with the same requestId but different payloads and authenticators.
      *   However, exactly same request can be submitted multiple times, but added just once into the global commitment storage.
      */
-    function submitCommitment(uint256 requestID, bytes calldata payload, bytes calldata authenticator) external;
+    function submitCommitment(bytes calldata requestID, bytes calldata payload, bytes calldata authenticator) external;
 
     /**
      * @dev Submit multiple commitments into the pool of unprocessed commitment requests in a single transaction
@@ -82,7 +93,7 @@ interface IAggregatorBatches {
      * @param requestIDs Array of specific request IDs to include in the batch
      * @return batchNumber The number of the newly created batch
      */
-    function createBatchForRequests(uint256[] calldata requestIDs) external returns (uint256 batchNumber);
+    function createBatchForRequests(bytes[] calldata requestIDs) external returns (uint256 batchNumber);
 
     /**
      * @dev Creates a new batch from the current pool of selected unprocessed commitments with an explicit batch number
@@ -95,7 +106,7 @@ interface IAggregatorBatches {
      * Auto-numbered batches will always use the first available gap, filling in gaps in the sequence.
      * Regardless of batch numbering, batch processing must still occur in strict sequential order.
      */
-    function createBatchForRequestsWithNumber(uint256[] calldata requestIDs, uint256 explicitBatchNumber)
+    function createBatchForRequestsWithNumber(bytes[] calldata requestIDs, uint256 explicitBatchNumber)
         external
         returns (uint256 batchNumber);
 
@@ -186,7 +197,7 @@ interface IAggregatorBatches {
      * @param requestID The ID of the commitment request to retrieve
      * @return request The commitment request data
      */
-    function getCommitment(uint256 requestID) external view returns (CommitmentRequest memory request);
+    function getCommitment(bytes calldata requestID) external view returns (CommitmentRequest memory request);
 
     /**
      * @dev Submits an updated hashroot after processing a batch.
@@ -224,7 +235,7 @@ interface IAggregatorBatches {
     /**
      * @dev Event emitted when a new commitment request is added to the pool
      */
-    event RequestSubmitted(uint256 indexed requestID, bytes payload);
+    event RequestSubmitted(bytes indexed requestID, bytes payload);
 
     /**
      * @dev Event emitted when multiple commitment requests are added to the pool in a batch operation

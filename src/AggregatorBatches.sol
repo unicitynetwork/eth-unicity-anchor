@@ -135,13 +135,19 @@ import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
  */
 contract AggregatorBatches is IAggregatorBatches {
     // Use OpenZeppelin's EnumerableSet for efficient set operations
-    using EnumerableSet for EnumerableSet.UintSet;
+    using EnumerableSet for EnumerableSet.AddressSet;
+
+    // Define a custom set for bytes request IDs, since we can't use EnumerableSet directly with bytes
+    struct BytesSet {
+        bytes[] values;
+        mapping(bytes32 => uint256) indices; // hash of bytes -> index in values array + 1 (0 means not in set)
+    }
 
     // Storage for commitment requests (all commitments, both processed and unprocessed)
-    mapping(uint256 => CommitmentRequest) private commitments;
+    mapping(bytes32 => CommitmentRequest) private commitments; // hash of requestId -> CommitmentRequest
 
     // Set of unprocessed commitment request IDs (not yet in a batch)
-    EnumerableSet.UintSet private unprocessedRequestIds;
+    BytesSet private unprocessedRequestIds;
 
     // Storage for batches
     mapping(uint256 => Batch) private batches;
@@ -151,13 +157,13 @@ contract AggregatorBatches is IAggregatorBatches {
 
     // Aggregator management
     mapping(address => bool) private trustedAggregators;
-    mapping(uint256 => mapping(bytes => mapping(address => bool))) private batchHashrootVotes;
-    mapping(uint256 => mapping(bytes => uint256)) private batchHashrootVoteCount;
+    mapping(uint256 => mapping(bytes32 => mapping(address => bool))) private batchHashrootVotes; // batch# -> hashroot hash -> aggregator -> voted
+    mapping(uint256 => mapping(bytes32 => uint256)) private batchHashrootVoteCount; // batch# -> hashroot hash -> vote count
 
     // Track all submitted hashroots for each batch
-    // Store the actual bytes hashroots, not just the hash
+    // Store the actual hashroots, not just the hash
     mapping(uint256 => bytes[]) private batchSubmittedHashroots;
-    mapping(uint256 => mapping(bytes32 => bool)) private batchHashrootExists;
+    mapping(uint256 => mapping(bytes32 => bool)) private batchHashrootExists; // batch# -> hashroot hash -> exists
 
     uint256 private requiredAggregatorVotes;
     uint256 private totalAggregators;
@@ -209,9 +215,57 @@ contract AggregatorBatches is IAggregatorBatches {
     }
 
     /**
+     * @dev Helper functions for BytesSet
+     */
+    function _contains(BytesSet storage set, bytes memory value) private view returns (bool) {
+        return set.indices[keccak256(value)] != 0;
+    }
+
+    function _add(BytesSet storage set, bytes memory value) private returns (bool) {
+        bytes32 hash = keccak256(value);
+        if (set.indices[hash] == 0) {
+            set.values.push(value);
+            set.indices[hash] = set.values.length;
+            return true;
+        }
+        return false;
+    }
+
+    function _remove(BytesSet storage set, bytes memory value) private returns (bool) {
+        bytes32 hash = keccak256(value);
+        uint256 index = set.indices[hash];
+        
+        if (index == 0) return false;
+        
+        index -= 1; // Adjust for 1-based indexing
+        
+        // If this is not the last element, move the last element to this position
+        if (index != set.values.length - 1) {
+            bytes memory lastValue = set.values[set.values.length - 1];
+            set.values[index] = lastValue;
+            set.indices[keccak256(lastValue)] = index + 1; // Update index for moved element
+        }
+        
+        // Remove the last element
+        set.values.pop();
+        delete set.indices[hash];
+        
+        return true;
+    }
+
+    function _length(BytesSet storage set) private view returns (uint256) {
+        return set.values.length;
+    }
+
+    function _at(BytesSet storage set, uint256 index) private view returns (bytes memory) {
+        require(index < set.values.length, "Index out of bounds");
+        return set.values[index];
+    }
+
+    /**
      * @dev Track all request IDs that have ever been in a batch
      */
-    mapping(uint256 => bool) private requestAddedToBatch;
+    mapping(bytes32 => bool) private requestAddedToBatch; // hash of requestId -> was in batch
 
     /**
      * @dev Submit commitment into the pool of unprocessed commitment requests
@@ -228,15 +282,17 @@ contract AggregatorBatches is IAggregatorBatches {
      * 3. If requestID is new:
      *    a. Add it to the unprocessed pool
      */
-    function submitCommitment(uint256 requestID, bytes calldata payload, bytes calldata authenticator)
+    function submitCommitment(bytes calldata requestID, bytes calldata payload, bytes calldata authenticator)
         external
         override
         onlyTrustedAggregator
     {
+        bytes32 requestIdHash = keccak256(requestID);
+        
         // If this request has been in a batch before
-        if (requestAddedToBatch[requestID]) {
+        if (requestAddedToBatch[requestIdHash]) {
             // Get the stored commitment data
-            CommitmentRequest storage existingCommitment = commitments[requestID];
+            CommitmentRequest storage existingCommitment = commitments[requestIdHash];
 
             // Check if payload and authenticator match exactly
             bytes32 existingPayloadHash = keccak256(existingCommitment.payload);
@@ -254,10 +310,10 @@ contract AggregatorBatches is IAggregatorBatches {
         }
 
         // Request is either in the unprocessed pool or brand new
-        commitments[requestID] =
+        commitments[requestIdHash] =
             CommitmentRequest({requestID: requestID, payload: payload, authenticator: authenticator});
-        if (!unprocessedRequestIds.contains(requestID)) {
-            unprocessedRequestIds.add(requestID);
+        if (!_contains(unprocessedRequestIds, requestID)) {
+            _add(unprocessedRequestIds, requestID);
         }
 
         emit RequestSubmitted(requestID, payload);
@@ -278,11 +334,12 @@ contract AggregatorBatches is IAggregatorBatches {
 
         for (uint256 i = 0; i < requests.length; i++) {
             CommitmentRequest calldata request = requests[i];
+            bytes32 requestIdHash = keccak256(request.requestID);
 
             // Check if this request has been in a batch before
-            if (requestAddedToBatch[request.requestID]) {
+            if (requestAddedToBatch[requestIdHash]) {
                 // Get the stored commitment data
-                CommitmentRequest storage existingCommitment = commitments[request.requestID];
+                CommitmentRequest storage existingCommitment = commitments[requestIdHash];
 
                 // Check if payload and authenticator match exactly
                 bytes32 existingPayloadHash = keccak256(existingCommitment.payload);
@@ -301,14 +358,14 @@ contract AggregatorBatches is IAggregatorBatches {
             }
 
             // Request is either in the unprocessed pool or brand new
-            commitments[request.requestID] = CommitmentRequest({
+            commitments[requestIdHash] = CommitmentRequest({
                 requestID: request.requestID,
                 payload: request.payload,
                 authenticator: request.authenticator
             });
 
-            if (!unprocessedRequestIds.contains(request.requestID)) {
-                unprocessedRequestIds.add(request.requestID);
+            if (!_contains(unprocessedRequestIds, request.requestID)) {
+                _add(unprocessedRequestIds, request.requestID);
             }
 
             emit RequestSubmitted(request.requestID, request.payload);
@@ -324,13 +381,12 @@ contract AggregatorBatches is IAggregatorBatches {
      * @return batchNumber The number of the newly created batch
      */
     function createBatch() external override onlyTrustedAggregator returns (uint256) {
-        //        require(unprocessedRequestIds.length() > 0, "No unprocessed commitments to batch");
-        if (unprocessedRequestIds.length() == 0) return 0;
+        if (_length(unprocessedRequestIds) == 0) return 0;
 
         // Convert set to array for batch creation
-        uint256[] memory allRequestIds = new uint256[](unprocessedRequestIds.length());
-        for (uint256 i = 0; i < unprocessedRequestIds.length(); i++) {
-            allRequestIds[i] = unprocessedRequestIds.at(i);
+        bytes[] memory allRequestIds = new bytes[](_length(unprocessedRequestIds));
+        for (uint256 i = 0; i < _length(unprocessedRequestIds); i++) {
+            allRequestIds[i] = _at(unprocessedRequestIds, i);
         }
 
         return _createBatchInternal(allRequestIds);
@@ -341,17 +397,16 @@ contract AggregatorBatches is IAggregatorBatches {
      * @param requestIDs Array of specific request IDs to include in the batch
      * @return batchNumber The number of the newly created batch
      */
-    function createBatchForRequests(uint256[] calldata requestIDs)
+    function createBatchForRequests(bytes[] calldata requestIDs)
         external
         override
         onlyTrustedAggregator
         returns (uint256)
     {
-        //        require(requestIDs.length > 0, "No request IDs provided");
         if (requestIDs.length == 0) return 0;
 
         // Use centralized filtering function to get valid request IDs
-        uint256[] memory validRequestIDs = _filterValidRequestsForBatch(requestIDs);
+        bytes[] memory validRequestIDs = _filterValidRequestsForBatch(requestIDs);
 
         require(validRequestIDs.length > 0, "No valid unprocessed request IDs provided");
         return _createBatchInternal(validRequestIDs);
@@ -363,7 +418,7 @@ contract AggregatorBatches is IAggregatorBatches {
      * @param explicitBatchNumber The explicit batch number to use for this batch
      * @return batchNumber The number of the newly created batch
      */
-    function createBatchForRequestsWithNumber(uint256[] calldata requestIDs, uint256 explicitBatchNumber)
+    function createBatchForRequestsWithNumber(bytes[] calldata requestIDs, uint256 explicitBatchNumber)
         external
         override
         onlyTrustedAggregator
@@ -373,7 +428,7 @@ contract AggregatorBatches is IAggregatorBatches {
         require(explicitBatchNumber > 0, "Batch number must be greater than 0");
 
         // Use centralized filtering function to get valid request IDs
-        uint256[] memory validRequestIDs = _filterValidRequestsForBatch(requestIDs);
+        bytes[] memory validRequestIDs = _filterValidRequestsForBatch(requestIDs);
 
         require(validRequestIDs.length > 0, "No valid unprocessed request IDs provided");
         return _createBatchWithExplicitNumber(validRequestIDs, explicitBatchNumber);
@@ -395,15 +450,16 @@ contract AggregatorBatches is IAggregatorBatches {
 
         // Process each commitment locally without using the external submitCommitments function
         uint256 successCount = 0;
-        uint256[] memory successfulRequestIds = new uint256[](commitmentRequests.length);
+        bytes[] memory successfulRequestIds = new bytes[](commitmentRequests.length);
 
         for (uint256 i = 0; i < commitmentRequests.length; i++) {
             CommitmentRequest calldata request = commitmentRequests[i];
+            bytes32 requestIdHash = keccak256(request.requestID);
 
             // Check if this request has been in a batch before
-            if (requestAddedToBatch[request.requestID]) {
+            if (requestAddedToBatch[requestIdHash]) {
                 // Get the stored commitment data
-                CommitmentRequest storage existingCommitment = commitments[request.requestID];
+                CommitmentRequest storage existingCommitment = commitments[requestIdHash];
 
                 // Check if payload and authenticator match exactly
                 bytes32 existingPayloadHash = keccak256(existingCommitment.payload);
@@ -423,14 +479,14 @@ contract AggregatorBatches is IAggregatorBatches {
             }
 
             // Request is either in the unprocessed pool or brand new
-            commitments[request.requestID] = CommitmentRequest({
+            commitments[requestIdHash] = CommitmentRequest({
                 requestID: request.requestID,
                 payload: request.payload,
                 authenticator: request.authenticator
             });
 
-            if (!unprocessedRequestIds.contains(request.requestID)) {
-                unprocessedRequestIds.add(request.requestID);
+            if (!_contains(unprocessedRequestIds, request.requestID)) {
+                _add(unprocessedRequestIds, request.requestID);
             }
 
             emit RequestSubmitted(request.requestID, request.payload);
@@ -444,7 +500,7 @@ contract AggregatorBatches is IAggregatorBatches {
         if (successCount == 0) return (0, 0);
 
         // Create properly sized array of request IDs for batch creation
-        uint256[] memory requestIds = new uint256[](successCount);
+        bytes[] memory requestIds = new bytes[](successCount);
         for (uint256 i = 0; i < successCount; i++) {
             requestIds[i] = successfulRequestIds[i];
         }
@@ -471,15 +527,16 @@ contract AggregatorBatches is IAggregatorBatches {
 
         // Process each commitment locally without using the external submitCommitments function
         uint256 successCount = 0;
-        uint256[] memory successfulRequestIds = new uint256[](commitmentRequests.length);
+        bytes[] memory successfulRequestIds = new bytes[](commitmentRequests.length);
 
         for (uint256 i = 0; i < commitmentRequests.length; i++) {
             CommitmentRequest calldata request = commitmentRequests[i];
+            bytes32 requestIdHash = keccak256(request.requestID);
 
             // Check if this request has been in a batch before
-            if (requestAddedToBatch[request.requestID]) {
+            if (requestAddedToBatch[requestIdHash]) {
                 // Get the stored commitment data
-                CommitmentRequest storage existingCommitment = commitments[request.requestID];
+                CommitmentRequest storage existingCommitment = commitments[requestIdHash];
 
                 // Check if payload and authenticator match exactly
                 bytes32 existingPayloadHash = keccak256(existingCommitment.payload);
@@ -499,14 +556,14 @@ contract AggregatorBatches is IAggregatorBatches {
             }
 
             // Request is either in the unprocessed pool or brand new
-            commitments[request.requestID] = CommitmentRequest({
+            commitments[requestIdHash] = CommitmentRequest({
                 requestID: request.requestID,
                 payload: request.payload,
                 authenticator: request.authenticator
             });
 
-            if (!unprocessedRequestIds.contains(request.requestID)) {
-                unprocessedRequestIds.add(request.requestID);
+            if (!_contains(unprocessedRequestIds, request.requestID)) {
+                _add(unprocessedRequestIds, request.requestID);
             }
 
             emit RequestSubmitted(request.requestID, request.payload);
@@ -520,7 +577,7 @@ contract AggregatorBatches is IAggregatorBatches {
         if (successCount == 0) return (0, 0);
 
         // Create properly sized array of request IDs for batch creation
-        uint256[] memory requestIds = new uint256[](successCount);
+        bytes[] memory requestIds = new bytes[](successCount);
         for (uint256 i = 0; i < successCount; i++) {
             requestIds[i] = successfulRequestIds[i];
         }
@@ -538,26 +595,30 @@ contract AggregatorBatches is IAggregatorBatches {
      * @param requestIDs Array of request IDs to filter
      * @return filteredIDs Array of valid request IDs that can be added to a batch
      */
-    function _filterValidRequestsForBatch(uint256[] memory requestIDs) private view returns (uint256[] memory) {
+    function _filterValidRequestsForBatch(bytes[] memory requestIDs) private view returns (bytes[] memory) {
         // First pass: count valid requests
         uint256 validCount = 0;
         for (uint256 i = 0; i < requestIDs.length; i++) {
+            bytes32 requestIdHash = keccak256(requestIDs[i]);
+            
             // A valid request must:
             // 1. Be in the unprocessed pool
             // 2. Not already be marked as added to a batch
             // This double-check protects against edge cases where a request might somehow
             // remain in the unprocessed pool despite being marked as batched
-            if (unprocessedRequestIds.contains(requestIDs[i]) && !requestAddedToBatch[requestIDs[i]]) {
+            if (_contains(unprocessedRequestIds, requestIDs[i]) && !requestAddedToBatch[requestIdHash]) {
                 validCount++;
             }
         }
 
         // Second pass: create properly sized array and fill it
-        uint256[] memory validRequestIDs = new uint256[](validCount);
+        bytes[] memory validRequestIDs = new bytes[](validCount);
         uint256 validIndex = 0;
 
         for (uint256 i = 0; i < requestIDs.length; i++) {
-            if (unprocessedRequestIds.contains(requestIDs[i]) && !requestAddedToBatch[requestIDs[i]]) {
+            bytes32 requestIdHash = keccak256(requestIDs[i]);
+            
+            if (_contains(unprocessedRequestIds, requestIDs[i]) && !requestAddedToBatch[requestIdHash]) {
                 validRequestIDs[validIndex] = requestIDs[i];
                 validIndex++;
             }
@@ -571,7 +632,7 @@ contract AggregatorBatches is IAggregatorBatches {
      * @param requestIDs Array of request IDs to include in the batch
      * @return The new batch number
      */
-    function _createBatchInternal(uint256[] memory requestIDs) private returns (uint256) {
+    function _createBatchInternal(bytes[] memory requestIDs) private returns (uint256) {
         // Use the first available gap for the new batch number
         uint256 newBatchNumber = firstGapIndex;
 
@@ -600,7 +661,7 @@ contract AggregatorBatches is IAggregatorBatches {
      * @param explicitBatchNumber The explicit batch number to use
      * @return The created batch number (same as explicitBatchNumber if successful)
      */
-    function _createBatchWithExplicitNumber(uint256[] memory requestIDs, uint256 explicitBatchNumber)
+    function _createBatchWithExplicitNumber(bytes[] memory requestIDs, uint256 explicitBatchNumber)
         private
         returns (uint256)
     {
@@ -620,12 +681,16 @@ contract AggregatorBatches is IAggregatorBatches {
         // Mark all requests as having been added to a batch
         for (uint256 i = 0; i < requestIDs.length; i++) {
             // This prevents future modifications to the commitment
-            requestAddedToBatch[requestIDs[i]] = true;
+            bytes32 requestIdHash = keccak256(requestIDs[i]);
+            requestAddedToBatch[requestIdHash] = true;
         }
 
+        // Create an empty hashroot
+        bytes memory emptyHashroot = bytes("");
+        
         // Store the new batch
         batches[explicitBatchNumber] =
-            Batch({batchNumber: explicitBatchNumber, requestIds: requestIDs, hashroot: bytes(""), processed: false});
+            Batch({batchNumber: explicitBatchNumber, requestIds: requestIDs, hashroot: emptyHashroot, processed: false});
 
         // Remove processed commitments from the unprocessed list
         _removeProcessedCommitments(requestIDs);
@@ -639,12 +704,12 @@ contract AggregatorBatches is IAggregatorBatches {
      * @dev Remove processed commitments from the unprocessed list
      * @param processedIds Array of request IDs that have been processed
      */
-    function _removeProcessedCommitments(uint256[] memory processedIds) private {
+    function _removeProcessedCommitments(bytes[] memory processedIds) private {
         // Remove each processed ID from the unprocessed set
         for (uint256 i = 0; i < processedIds.length; i++) {
             // Only remove if it exists in the set
-            if (unprocessedRequestIds.contains(processedIds[i])) {
-                unprocessedRequestIds.remove(processedIds[i]);
+            if (_contains(unprocessedRequestIds, processedIds[i])) {
+                _remove(unprocessedRequestIds, processedIds[i]);
             }
         }
     }
@@ -654,8 +719,9 @@ contract AggregatorBatches is IAggregatorBatches {
      * @param requestID The ID of the commitment to retrieve
      * @return request The commitment request data
      */
-    function getCommitment(uint256 requestID) external view returns (CommitmentRequest memory request) {
-        return commitments[requestID];
+    function getCommitment(bytes calldata requestID) external view override returns (CommitmentRequest memory request) {
+        bytes32 requestIdHash = keccak256(requestID);
+        return commitments[requestIdHash];
     }
 
     /**
@@ -673,11 +739,12 @@ contract AggregatorBatches is IAggregatorBatches {
         for (uint256 i = highestBatchNumber; i > latestProcessedBatchNumber; i--) {
             if (batches[i].batchNumber != 0 && !batches[i].processed) {
                 // Convert the request IDs to full commitment data
-                uint256[] storage requestIds = batches[i].requestIds;
+                bytes[] storage requestIds = batches[i].requestIds;
                 CommitmentRequest[] memory batchRequests = new CommitmentRequest[](requestIds.length);
 
                 for (uint256 j = 0; j < requestIds.length; j++) {
-                    batchRequests[j] = commitments[requestIds[j]];
+                    bytes32 requestIdHash = keccak256(requestIds[j]);
+                    batchRequests[j] = commitments[requestIdHash];
                 }
 
                 return (i, batchRequests);
@@ -708,11 +775,12 @@ contract AggregatorBatches is IAggregatorBatches {
         Batch storage batch = batches[batchNumber];
 
         // Convert the request IDs to full commitment data
-        uint256[] storage requestIds = batch.requestIds;
+        bytes[] storage requestIds = batch.requestIds;
         CommitmentRequest[] memory batchRequests = new CommitmentRequest[](requestIds.length);
 
         for (uint256 i = 0; i < requestIds.length; i++) {
-            batchRequests[i] = commitments[requestIds[i]];
+            bytes32 requestIdHash = keccak256(requestIds[i]);
+            batchRequests[i] = commitments[requestIdHash];
         }
 
         return (batchRequests, batch.processed, batch.hashroot);
@@ -759,7 +827,7 @@ contract AggregatorBatches is IAggregatorBatches {
      * @return count The number of unprocessed request IDs
      */
     function getUnprocessedRequestCount() external view returns (uint256) {
-        return unprocessedRequestIds.length();
+        return _length(unprocessedRequestIds);
     }
 
     /**
@@ -767,9 +835,9 @@ contract AggregatorBatches is IAggregatorBatches {
      * @param index The index in the unprocessed request IDs set
      * @return requestID The request ID at the specified index
      */
-    function getUnprocessedRequestAtIndex(uint256 index) external view returns (uint256) {
-        require(index < unprocessedRequestIds.length(), "Index out of bounds");
-        return unprocessedRequestIds.at(index);
+    function getUnprocessedRequestAtIndex(uint256 index) external view returns (bytes memory) {
+        require(index < _length(unprocessedRequestIds), "Index out of bounds");
+        return _at(unprocessedRequestIds, index);
     }
 
     /**
@@ -777,20 +845,20 @@ contract AggregatorBatches is IAggregatorBatches {
      * @param requestID The request ID to check
      * @return isUnprocessed True if the request ID is unprocessed, false otherwise
      */
-    function isRequestUnprocessed(uint256 requestID) external view returns (bool) {
-        return unprocessedRequestIds.contains(requestID);
+    function isRequestUnprocessed(bytes calldata requestID) external view returns (bool) {
+        return _contains(unprocessedRequestIds, requestID);
     }
 
     /**
      * @dev Returns all unprocessed request IDs
      * @return requestIDs Array of all unprocessed request IDs
      */
-    function getAllUnprocessedRequests() external view returns (uint256[] memory) {
-        uint256 length = unprocessedRequestIds.length();
-        uint256[] memory result = new uint256[](length);
+    function getAllUnprocessedRequests() external view returns (bytes[] memory) {
+        uint256 length = _length(unprocessedRequestIds);
+        bytes[] memory result = new bytes[](length);
 
         for (uint256 i = 0; i < length; i++) {
-            result[i] = unprocessedRequestIds.at(i);
+            result[i] = _at(unprocessedRequestIds, i);
         }
 
         return result;
@@ -825,7 +893,8 @@ contract AggregatorBatches is IAggregatorBatches {
         view
         returns (uint256 voteCount)
     {
-        return batchHashrootVoteCount[batchNumber][hashroot];
+        bytes32 hashrootHash = keccak256(hashroot);
+        return batchHashrootVoteCount[batchNumber][hashrootHash];
     }
 
     /**
@@ -846,7 +915,8 @@ contract AggregatorBatches is IAggregatorBatches {
         require(batches[batchNumber].batchNumber != 0, "Batch does not exist");
         
         // Check if the aggregator has voted for this hashroot
-        return batchHashrootVotes[batchNumber][hashroot][aggregator];
+        bytes32 hashrootHash = keccak256(hashroot);
+        return batchHashrootVotes[batchNumber][hashrootHash][aggregator];
     }
 
     /**
@@ -872,9 +942,10 @@ contract AggregatorBatches is IAggregatorBatches {
         // Check if the aggregator has voted for any of these hashroots
         for (uint256 i = 0; i < allSubmittedHashroots.length; i++) {
             bytes memory submittedHashroot = allSubmittedHashroots[i];
+            bytes32 submittedHashrootHash = keccak256(submittedHashroot);
             
             // Check if the aggregator voted for this hashroot
-            if (batchHashrootVotes[batchNumber][submittedHashroot][aggregator]) {
+            if (batchHashrootVotes[batchNumber][submittedHashrootHash][aggregator]) {
                 return (true, submittedHashroot);
             }
         }
@@ -911,7 +982,9 @@ contract AggregatorBatches is IAggregatorBatches {
             // If it's the same, accept silently (useful for retries and redundant submissions)
             // If different, revert with a clear error message
             bytes memory existingHashroot = batches[batchNumber].hashroot;
-            bool isSameHashroot = keccak256(existingHashroot) == keccak256(hashroot);
+            bytes32 existingHashrootHash = keccak256(existingHashroot);
+            bytes32 newHashrootHash = keccak256(hashroot);
+            bool isSameHashroot = existingHashrootHash == newHashrootHash;
             
             // If same hashroot, silently accept the submission - supporting retries and fault tolerance
             if (isSameHashroot) {
@@ -928,8 +1001,11 @@ contract AggregatorBatches is IAggregatorBatches {
             batchNumber == latestProcessedBatchNumber + 1, "Batches must be processed in sequence; can't skip batches"
         );
 
+        // Convert hashroot to bytes32 hash for storage mappings
+        bytes32 hashrootHash = keccak256(hashroot);
+        
         // Check if this aggregator has already voted for this specific hashroot
-        bool alreadyVotedForThisHashroot = batchHashrootVotes[batchNumber][hashroot][msg.sender];
+        bool alreadyVotedForThisHashroot = batchHashrootVotes[batchNumber][hashrootHash][msg.sender];
 
         // If already voted for this specific hashroot, no need to proceed
         if (alreadyVotedForThisHashroot) {
@@ -937,7 +1013,7 @@ contract AggregatorBatches is IAggregatorBatches {
         }
 
         // Check if the aggregator has already voted for ANY other hashroot for this batch
-        bytes[] memory allSubmittedHashroots = getSubmittedHashrootsForBatch(batchNumber);
+        bytes[] memory allSubmittedHashroots = batchSubmittedHashroots[batchNumber];
 
         // Track if we found a different hashroot vote for this aggregator
         bool hasVotedForDifferentHashroot = false;
@@ -945,14 +1021,15 @@ contract AggregatorBatches is IAggregatorBatches {
         // Check each submitted hashroot to see if this aggregator has voted for it
         for (uint256 i = 0; i < allSubmittedHashroots.length; i++) {
             bytes memory submittedHashroot = allSubmittedHashroots[i];
+            bytes32 submittedHashrootHash = keccak256(submittedHashroot);
 
             // Skip if this is the current hashroot we're voting on
-            if (keccak256(submittedHashroot) == keccak256(hashroot)) {
+            if (submittedHashrootHash == hashrootHash) {
                 continue;
             }
 
             // Check if the aggregator voted for this different hashroot
-            if (batchHashrootVotes[batchNumber][submittedHashroot][msg.sender]) {
+            if (batchHashrootVotes[batchNumber][submittedHashrootHash][msg.sender]) {
                 hasVotedForDifferentHashroot = true;
                 break;
             }
@@ -964,11 +1041,10 @@ contract AggregatorBatches is IAggregatorBatches {
         }
 
         // Record the vote
-        batchHashrootVotes[batchNumber][hashroot][msg.sender] = true;
-        batchHashrootVoteCount[batchNumber][hashroot]++;
+        batchHashrootVotes[batchNumber][hashrootHash][msg.sender] = true;
+        batchHashrootVoteCount[batchNumber][hashrootHash]++;
 
         // Track this hashroot if it's new
-        bytes32 hashrootHash = keccak256(hashroot);
         if (!batchHashrootExists[batchNumber][hashrootHash]) {
             batchSubmittedHashroots[batchNumber].push(hashroot);
             batchHashrootExists[batchNumber][hashrootHash] = true;
@@ -977,7 +1053,7 @@ contract AggregatorBatches is IAggregatorBatches {
         emit HashrootSubmitted(batchNumber, msg.sender, hashroot);
 
         // Check if we have enough votes for this hashroot to consider the batch processed
-        if (batchHashrootVoteCount[batchNumber][hashroot] >= requiredAggregatorVotes) {
+        if (batchHashrootVoteCount[batchNumber][hashrootHash] >= requiredAggregatorVotes) {
             // Mark batch as processed and update hashroot
             batches[batchNumber].processed = true;
             batches[batchNumber].hashroot = hashroot;
@@ -1049,8 +1125,8 @@ contract AggregatorBatches is IAggregatorBatches {
      *
      * @param requestID The request ID to force into the unprocessed pool
      */
-    function _testOnlyForceAddToUnprocessedPool(uint256 requestID) external onlyOwner {
+    function _testOnlyForceAddToUnprocessedPool(bytes calldata requestID) external onlyOwner {
         // Add the requestID to the unprocessed pool without changing requestAddedToBatch
-        unprocessedRequestIds.add(requestID);
+        _add(unprocessedRequestIds, requestID);
     }
 }

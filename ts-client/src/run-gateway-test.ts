@@ -120,18 +120,26 @@ function createHttpServer(client: AggregatorGatewayClient): http.Server {
     
     // Helper to send JSON-RPC response
     const sendJsonRpcResponse = (id: any, result: any = null, error: any = null) => {
-      const response = {
+      const response: {
+        jsonrpc: string;
+        id: any;
+        error?: {
+          code: number;
+          message: string;
+        };
+        result?: any;
+      } = {
         jsonrpc: '2.0',
         id: id
       };
       
       if (error) {
-        response['error'] = {
+        response.error = {
           code: error.code || -32000,
           message: error.message || 'Unknown error'
         };
       } else {
-        response['result'] = result;
+        response.result = result;
       }
       
       res.writeHead(200, { 'Content-Type': 'application/json' });

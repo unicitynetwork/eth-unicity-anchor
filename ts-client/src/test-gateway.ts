@@ -52,6 +52,15 @@ interface InclusionProof {
   proof: string;
   isInclusion?: boolean;  // Flag to indicate if this is an inclusion or non-inclusion proof
   status?: string;        // Status flag for non-inclusion proofs (e.g., 'PENDING', 'NOT_FOUND')
+  
+  // Additional properties from common InclusionProof class implementation
+  authenticator?: {
+    publicKey: string;
+    stateHash: string;
+    signature: string;
+  };
+  transactionHash?: string;
+  merkleTreePath?: any;
 }
 
 interface ProofResult {
@@ -134,7 +143,7 @@ async function submitCommitment(gatewayUrl: string, commitment: Commitment): Pro
     const response = await axios.post(gatewayUrl, {
       jsonrpc: '2.0',
       method: 'submit_commitment',
-      params: [commitment],
+      params: commitment, // Send the commitment object directly instead of in an array
       id: 1
     });
     

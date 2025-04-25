@@ -3,16 +3,17 @@ import { DataHash } from './DataHash';
 
 /**
  * Represents a request ID in the system
+ * Now supports arbitrary length request IDs
  */
 export class RequestId {
-  public readonly hash: DataHash;
+  public readonly data: Buffer;
   
   /**
    * Create a new RequestId
-   * @param hash The hash representing the request ID
+   * @param data The data representing the request ID
    */
-  constructor(hash: DataHash) {
-    this.hash = hash;
+  constructor(data: Buffer) {
+    this.data = data;
   }
 
   /**
@@ -33,11 +34,11 @@ export class RequestId {
       
       // Check if it's a hex string
       if (/^[0-9a-fA-F]+$/.test(idStr)) {
-        return new RequestId(DataHash.fromHex(idStr));
+        return new RequestId(Buffer.from(idStr, 'hex'));
       }
       
       // Otherwise, hash the string
-      return new RequestId(DataHash.fromData(idStr));
+      return RequestId.fromData(idStr);
     }
     
     // Both parameters are provided - create hash from public key and state hash
@@ -50,9 +51,32 @@ export class RequestId {
       : Buffer.from(stateHash as string, 'hex');
     
     const combinedBuffer = Buffer.concat([pubKeyBuffer, stateHashBuffer]);
-    const hash = crypto.createHash('sha256').update(combinedBuffer).digest();
+    return RequestId.fromData(combinedBuffer);
+  }
+
+  /**
+   * Create a RequestId from binary data
+   * @param data Binary data to hash
+   * @returns RequestId instance
+   */
+  public static fromData(data: Buffer | Uint8Array | string): RequestId {
+    const bufferData = Buffer.isBuffer(data) 
+      ? data 
+      : typeof data === 'string' 
+        ? Buffer.from(data) 
+        : Buffer.from(data);
     
-    return new RequestId(new DataHash(hash));
+    const hash = crypto.createHash('sha256').update(bufferData).digest();
+    return new RequestId(hash);
+  }
+
+  /**
+   * Create a RequestId from a hex string
+   * @param hex Hex string
+   * @returns RequestId instance
+   */
+  public static fromHex(hex: string): RequestId {
+    return new RequestId(Buffer.from(hex, 'hex'));
   }
 
   /**
@@ -61,15 +85,31 @@ export class RequestId {
    * @returns RequestId instance
    */
   public static fromDto(dto: string): RequestId {
-    return new RequestId(DataHash.fromDto(dto));
+    return RequestId.fromHex(dto);
   }
 
   /**
    * Convert to BigInt for use in SMT
+   * This may throw an error if the request ID is too large for BigInt
    * @returns BigInt representation
    */
   public toBigInt(): bigint {
-    return BigInt('0x' + this.hash.toString());
+    try {
+      return BigInt('0x' + this.toString());
+    } catch (e) {
+      // If conversion to BigInt fails (e.g., because RequestId is too large),
+      // use a hash of the full request ID instead
+      const hash = crypto.createHash('sha256').update(this.data).digest('hex');
+      return BigInt('0x' + hash);
+    }
+  }
+
+  /**
+   * Convert to bytes for contract interaction
+   * @returns Bytes representation for Solidity
+   */
+  public toBytes(): string {
+    return '0x' + this.data.toString('hex');
   }
 
   /**
@@ -78,7 +118,7 @@ export class RequestId {
    * @returns Whether they are equal
    */
   public equals(other: RequestId): boolean {
-    return this.hash.equals(other.hash);
+    return this.data.equals(other.data);
   }
 
   /**
@@ -86,7 +126,15 @@ export class RequestId {
    * @returns String representation
    */
   public toString(): string {
-    return this.hash.toString();
+    return this.data.toString('hex');
+  }
+
+  /**
+   * Convert to buffer
+   * @returns Buffer representation
+   */
+  public toBuffer(): Buffer {
+    return this.data;
   }
 
   /**
@@ -94,6 +142,6 @@ export class RequestId {
    * @returns DTO representation
    */
   public toDto(): string {
-    return this.hash.toDto();
+    return this.toString();
   }
 }
