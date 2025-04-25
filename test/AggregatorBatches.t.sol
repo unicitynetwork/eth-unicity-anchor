@@ -16,32 +16,20 @@ contract AggregatorBatchesTest is Test {
      * This is used to test edge cases where a request is both marked as batched
      * and somehow remains in or gets added back to the unprocessed pool
      */
-    function _forceAddToUnprocessedPool(uint256 requestID) internal {
+    function _forceAddToUnprocessedPool(bytes memory requestID) internal {
         // To directly add to the unprocessed pool, we need to:
         // 1. Get the address of the aggregator contract
         // 2. Call a specially crafted function that does the operation
 
         // Call a function on the contract that will add the ID to the unprocessed pool
-        bytes memory callData = abi.encodeWithSignature("_testOnlyForceAddToUnprocessedPool(uint256)", requestID);
+        bytes memory callData = abi.encodeWithSignature("_testOnlyForceAddToUnprocessedPool(bytes)", requestID);
 
         // Execute the call as a prank from the contract owner
         vm.prank(owner);
         (bool success,) = address(aggregator).call(callData);
 
-        // If this fails, the contract doesn't have our test helper, so fall back to direct manipuation
-        if (!success) {
-            // Direct storage manipulation using hardcoded EnumerableSet layout knowledge
-            // Warning: This is fragile and depends on internal Solidity storage layout
-            // This assumes the unprocessedRequestIds is the 4th storage slot in the contract
-            bytes32 setSlot = keccak256(abi.encode(uint256(3)));
-
-            // Get the current length
-            vm.store(address(aggregator), setSlot, bytes32(uint256(1)));
-
-            // Store the value at index 0
-            bytes32 valueSlot = keccak256(abi.encode(setSlot));
-            vm.store(address(aggregator), valueSlot, bytes32(requestID));
-        }
+        // If this fails, the contract doesn't have our test helper
+        require(success, "Force add to unprocessed pool failed");
     }
 
     function setUp() public {
@@ -67,7 +55,7 @@ contract AggregatorBatchesTest is Test {
 
     function testSubmitCommitment() public {
         // Prepare test data
-        uint256 requestID = 1;
+        bytes memory requestID = bytes("request_1");
         bytes memory payload = bytes("test payload");
         bytes memory authenticator = bytes("test authenticator");
 
@@ -88,19 +76,19 @@ contract AggregatorBatchesTest is Test {
         IAggregatorBatches.CommitmentRequest[] memory requests = new IAggregatorBatches.CommitmentRequest[](3);
 
         requests[0] = IAggregatorBatches.CommitmentRequest({
-            requestID: 101,
+            requestID: bytes("request_101"),
             payload: bytes("payload 1"),
             authenticator: bytes("auth 1")
         });
 
         requests[1] = IAggregatorBatches.CommitmentRequest({
-            requestID: 102,
+            requestID: bytes("request_102"),
             payload: bytes("payload 2"),
             authenticator: bytes("auth 2")
         });
 
         requests[2] = IAggregatorBatches.CommitmentRequest({
-            requestID: 103,
+            requestID: bytes("request_103"),
             payload: bytes("payload 3"),
             authenticator: bytes("auth 3")
         });
@@ -124,9 +112,9 @@ contract AggregatorBatchesTest is Test {
             aggregator.getBatch(batchNumber);
         // Verify batch contains our commitments
         assertEq(batchRequests.length, 3, "Batch should contain 3 commitments");
-        assertEq(batchRequests[0].requestID, 101, "First commitment should be requestID 101");
-        assertEq(batchRequests[1].requestID, 102, "Second commitment should be requestID 102");
-        assertEq(batchRequests[2].requestID, 103, "Third commitment should be requestID 103");
+        assertEq(keccak256(batchRequests[0].requestID), keccak256(bytes("request_101")), "First commitment should be requestID 101");
+        assertEq(keccak256(batchRequests[1].requestID), keccak256(bytes("request_102")), "Second commitment should be requestID 102");
+        assertEq(keccak256(batchRequests[2].requestID), keccak256(bytes("request_103")), "Third commitment should be requestID 103");
     }
 
     function testSubmitAndCreateBatch() public {
@@ -134,19 +122,19 @@ contract AggregatorBatchesTest is Test {
         IAggregatorBatches.CommitmentRequest[] memory requests = new IAggregatorBatches.CommitmentRequest[](3);
 
         requests[0] = IAggregatorBatches.CommitmentRequest({
-            requestID: 201,
+            requestID: bytes("request_201"),
             payload: bytes("payload 1"),
             authenticator: bytes("auth 1")
         });
 
         requests[1] = IAggregatorBatches.CommitmentRequest({
-            requestID: 202,
+            requestID: bytes("request_202"),
             payload: bytes("payload 2"),
             authenticator: bytes("auth 2")
         });
 
         requests[2] = IAggregatorBatches.CommitmentRequest({
-            requestID: 203,
+            requestID: bytes("request_203"),
             payload: bytes("payload 3"),
             authenticator: bytes("auth 3")
         });
@@ -164,9 +152,9 @@ contract AggregatorBatchesTest is Test {
             aggregator.getBatch(batchNumber);
         // Verify batch contains our commitments
         assertEq(batchRequests.length, 3, "Batch should contain 3 commitments");
-        assertEq(batchRequests[0].requestID, 201, "First commitment should be requestID 201");
-        assertEq(batchRequests[1].requestID, 202, "Second commitment should be requestID 202");
-        assertEq(batchRequests[2].requestID, 203, "Third commitment should be requestID 203");
+        assertEq(keccak256(batchRequests[0].requestID), keccak256(bytes("request_201")), "First commitment should be requestID 201");
+        assertEq(keccak256(batchRequests[1].requestID), keccak256(bytes("request_202")), "Second commitment should be requestID 202");
+        assertEq(keccak256(batchRequests[2].requestID), keccak256(bytes("request_203")), "Third commitment should be requestID 203");
         assertEq(processed, false, "Batch should not be processed yet");
         assertEq(hashroot.length, 0, "Hashroot should be empty");
     }
@@ -174,7 +162,7 @@ contract AggregatorBatchesTest is Test {
     function testSubmitHashroot() public {
         // Submit a commitment and create a batch
         vm.prank(trustedAggregators[0]);
-        aggregator.submitCommitment(1, bytes("test payload"), bytes("test authenticator"));
+        aggregator.submitCommitment(bytes("request_1"), bytes("test payload"), bytes("test authenticator"));
 
         vm.prank(trustedAggregators[0]);
         uint256 batchNumber = aggregator.createBatch();
@@ -206,7 +194,7 @@ contract AggregatorBatchesTest is Test {
     function testHashrootVoting() public {
         // Create a batch
         vm.prank(trustedAggregators[0]);
-        aggregator.submitCommitment(50, bytes("payload 50"), bytes("auth 50"));
+        aggregator.submitCommitment(bytes("request_50"), bytes("payload 50"), bytes("auth 50"));
 
         vm.prank(trustedAggregators[0]);
         uint256 batchNumber = aggregator.createBatch();
@@ -261,7 +249,7 @@ contract AggregatorBatchesTest is Test {
     function testSubmitHashrootToProcessedBatch() public {
         // Submit a commitment and create a batch
         vm.prank(trustedAggregators[0]);
-        aggregator.submitCommitment(999, bytes("test payload"), bytes("test authenticator"));
+        aggregator.submitCommitment(bytes("request_999"), bytes("test payload"), bytes("test authenticator"));
 
         vm.prank(trustedAggregators[0]);
         uint256 batchNumber = aggregator.createBatch();
@@ -312,7 +300,7 @@ contract AggregatorBatchesTest is Test {
     function testAggregatorVoteInspection() public {
         // Submit a commitment and create a batch
         vm.prank(trustedAggregators[0]);
-        aggregator.submitCommitment(888, bytes("vote inspection test"), bytes("auth"));
+        aggregator.submitCommitment(bytes("request_888"), bytes("vote inspection test"), bytes("auth"));
 
         vm.prank(trustedAggregators[0]);
         uint256 batchNumber = aggregator.createBatch();
@@ -388,15 +376,15 @@ contract AggregatorBatchesTest is Test {
         vm.startPrank(trustedAggregators[0]);
 
         // First batch
-        aggregator.submitCommitment(10, bytes("payload 10"), bytes("auth 10"));
+        aggregator.submitCommitment(bytes("request_10"), bytes("payload 10"), bytes("auth 10"));
         uint256 batch1 = aggregator.createBatch();
 
         // Second batch
-        aggregator.submitCommitment(20, bytes("payload 20"), bytes("auth 20"));
+        aggregator.submitCommitment(bytes("request_20"), bytes("payload 20"), bytes("auth 20"));
         uint256 batch2 = aggregator.createBatch();
 
         // Third batch
-        aggregator.submitCommitment(30, bytes("payload 30"), bytes("auth 30"));
+        aggregator.submitCommitment(bytes("request_30"), bytes("payload 30"), bytes("auth 30"));
         uint256 batch3 = aggregator.createBatch();
         vm.stopPrank();
 
@@ -458,15 +446,15 @@ contract AggregatorBatchesTest is Test {
     function testMultipleBatches() public {
         // Create 3 commitments
         vm.startPrank(trustedAggregators[0]);
-        aggregator.submitCommitment(1, bytes("payload 1"), bytes("auth 1"));
-        aggregator.submitCommitment(2, bytes("payload 2"), bytes("auth 2"));
-        aggregator.submitCommitment(3, bytes("payload 3"), bytes("auth 3"));
+        aggregator.submitCommitment(bytes("request_1"), bytes("payload 1"), bytes("auth 1"));
+        aggregator.submitCommitment(bytes("request_2"), bytes("payload 2"), bytes("auth 2"));
+        aggregator.submitCommitment(bytes("request_3"), bytes("payload 3"), bytes("auth 3"));
         vm.stopPrank();
 
         // Create first batch with specific requests
-        uint256[] memory requestIDs = new uint256[](2);
-        requestIDs[0] = 1;
-        requestIDs[1] = 2;
+        bytes[] memory requestIDs = new bytes[](2);
+        requestIDs[0] = bytes("request_1");
+        requestIDs[1] = bytes("request_2");
 
         vm.prank(trustedAggregators[0]);
         uint256 batch1 = aggregator.createBatchForRequests(requestIDs);
@@ -482,14 +470,14 @@ contract AggregatorBatchesTest is Test {
         assertEq(requests1.length, 2, "First batch should have 2 requests");
         assertEq(requests2.length, 1, "Second batch should have 1 request");
 
-        assertEq(requests1[0].requestID, 1, "First batch should contain request 1");
-        assertEq(requests1[1].requestID, 2, "First batch should contain request 2");
-        assertEq(requests2[0].requestID, 3, "Second batch should contain request 3");
+        assertEq(keccak256(requests1[0].requestID), keccak256(bytes("request_1")), "First batch should contain request 1");
+        assertEq(keccak256(requests1[1].requestID), keccak256(bytes("request_2")), "First batch should contain request 2");
+        assertEq(keccak256(requests2[0].requestID), keccak256(bytes("request_3")), "Second batch should contain request 3");
     }
 
     function testCommitmentModificationRules() public {
         // Submit a new commitment
-        uint256 testId = 500;
+        bytes memory testId = bytes("request_500");
         bytes memory originalPayload = bytes("original payload");
         bytes memory originalAuth = bytes("original auth");
 
@@ -508,7 +496,7 @@ contract AggregatorBatchesTest is Test {
         aggregator.submitCommitment(testId, updatedPayload, updatedAuth);
 
         // Create a batch with this commitment
-        uint256[] memory batchRequestIds = new uint256[](1);
+        bytes[] memory batchRequestIds = new bytes[](1);
         batchRequestIds[0] = testId;
 
         vm.prank(trustedAggregators[0]);
@@ -544,11 +532,11 @@ contract AggregatorBatchesTest is Test {
     function testUnprocessedPoolManagement() public {
         // Create a few commitments
         vm.startPrank(trustedAggregators[0]);
-        aggregator.submitCommitment(101, bytes("payload 101"), bytes("auth 101"));
-        aggregator.submitCommitment(102, bytes("payload 102"), bytes("auth 102"));
-        aggregator.submitCommitment(103, bytes("payload 103"), bytes("auth 103"));
-        aggregator.submitCommitment(104, bytes("payload 104"), bytes("auth 104"));
-        aggregator.submitCommitment(105, bytes("payload 105"), bytes("auth 105"));
+        aggregator.submitCommitment(bytes("request_101"), bytes("payload 101"), bytes("auth 101"));
+        aggregator.submitCommitment(bytes("request_102"), bytes("payload 102"), bytes("auth 102"));
+        aggregator.submitCommitment(bytes("request_103"), bytes("payload 103"), bytes("auth 103"));
+        aggregator.submitCommitment(bytes("request_104"), bytes("payload 104"), bytes("auth 104"));
+        aggregator.submitCommitment(bytes("request_105"), bytes("payload 105"), bytes("auth 105"));
         vm.stopPrank();
 
         // Test unprocessed request count
@@ -556,25 +544,26 @@ contract AggregatorBatchesTest is Test {
         assertEq(count, 5, "Should have 5 unprocessed requests");
 
         // Test accessing unprocessed requests by index
-        uint256 requestId = aggregator.getUnprocessedRequestAtIndex(0);
-        assertTrue(requestId >= 101 && requestId <= 105, "Should return a valid request ID");
+        bytes memory requestId = aggregator.getUnprocessedRequestAtIndex(0);
+        // Check that the requestId starts with "request_"
+        assertTrue(bytes(requestId).length > 0, "Should return a valid request ID");
 
         // Test checking if a request is unprocessed
-        bool isUnprocessed = aggregator.isRequestUnprocessed(101);
+        bool isUnprocessed = aggregator.isRequestUnprocessed(bytes("request_101"));
         assertTrue(isUnprocessed, "Request 101 should be unprocessed");
 
-        isUnprocessed = aggregator.isRequestUnprocessed(999);
+        isUnprocessed = aggregator.isRequestUnprocessed(bytes("request_999"));
         assertFalse(isUnprocessed, "Request 999 should not exist");
 
         // Test getting all unprocessed requests
-        uint256[] memory allRequests = aggregator.getAllUnprocessedRequests();
+        bytes[] memory allRequests = aggregator.getAllUnprocessedRequests();
         assertEq(allRequests.length, 5, "Should return all 5 unprocessed requests");
 
         // Create a batch with some requests
-        uint256[] memory batchRequestIds = new uint256[](3);
-        batchRequestIds[0] = 101;
-        batchRequestIds[1] = 103;
-        batchRequestIds[2] = 105;
+        bytes[] memory batchRequestIds = new bytes[](3);
+        batchRequestIds[0] = bytes("request_101");
+        batchRequestIds[1] = bytes("request_103");
+        batchRequestIds[2] = bytes("request_105");
 
         vm.prank(trustedAggregators[0]);
         aggregator.createBatchForRequests(batchRequestIds);
@@ -583,10 +572,10 @@ contract AggregatorBatchesTest is Test {
         count = aggregator.getUnprocessedRequestCount();
         assertEq(count, 2, "Should have 2 unprocessed requests remaining");
 
-        isUnprocessed = aggregator.isRequestUnprocessed(101);
+        isUnprocessed = aggregator.isRequestUnprocessed(bytes("request_101"));
         assertFalse(isUnprocessed, "Request 101 should be processed now");
 
-        isUnprocessed = aggregator.isRequestUnprocessed(102);
+        isUnprocessed = aggregator.isRequestUnprocessed(bytes("request_102"));
         assertTrue(isUnprocessed, "Request 102 should still be unprocessed");
 
         // Get all remaining unprocessed requests
@@ -598,8 +587,8 @@ contract AggregatorBatchesTest is Test {
         bool found104 = false;
 
         for (uint256 i = 0; i < allRequests.length; i++) {
-            if (allRequests[i] == 102) found102 = true;
-            if (allRequests[i] == 104) found104 = true;
+            if (keccak256(allRequests[i]) == keccak256(bytes("request_102"))) found102 = true;
+            if (keccak256(allRequests[i]) == keccak256(bytes("request_104"))) found104 = true;
         }
 
         assertTrue(found102, "Request 102 should be in the unprocessed pool");
@@ -617,7 +606,7 @@ contract AggregatorBatchesTest is Test {
         assertEq(batchNumber, 0, "Should return 0 for empty pool");
 
         // Test with empty request array
-        uint256[] memory emptyRequests = new uint256[](0);
+        bytes[] memory emptyRequests = new bytes[](0);
         vm.prank(trustedAggregators[0]);
         batchNumber = aggregator.createBatchForRequests(emptyRequests);
 
@@ -628,13 +617,13 @@ contract AggregatorBatchesTest is Test {
     function testCreateBatchWithInvalidRequests() public {
         // Add some valid commitments
         vm.prank(trustedAggregators[0]);
-        aggregator.submitCommitment(100, bytes("test"), bytes("test"));
+        aggregator.submitCommitment(bytes("request_100"), bytes("test"), bytes("test"));
 
         // Create array with both valid and invalid request IDs
-        uint256[] memory requestIDs = new uint256[](3);
-        requestIDs[0] = 100; // valid
-        requestIDs[1] = 999; // invalid - doesn't exist
-        requestIDs[2] = 888; // invalid - doesn't exist
+        bytes[] memory requestIDs = new bytes[](3);
+        requestIDs[0] = bytes("request_100"); // valid
+        requestIDs[1] = bytes("request_999"); // invalid - doesn't exist
+        requestIDs[2] = bytes("request_888"); // invalid - doesn't exist
 
         // Try to create batch - should only include valid requests
         vm.prank(trustedAggregators[0]);
@@ -646,7 +635,7 @@ contract AggregatorBatchesTest is Test {
         // Get batch and verify it contains only our valid commitment
         (IAggregatorBatches.CommitmentRequest[] memory requests,,) = aggregator.getBatch(batchNumber);
         assertEq(requests.length, 1, "Batch should contain only 1 valid request");
-        assertEq(requests[0].requestID, 100, "Only valid request ID should be included");
+        assertEq(keccak256(requests[0].requestID), keccak256(bytes("request_100")), "Only valid request ID should be included");
     }
 
     /**
@@ -656,35 +645,35 @@ contract AggregatorBatchesTest is Test {
     function testOverlappingBatches() public {
         // Create several test commitments
         vm.startPrank(trustedAggregators[0]);
-        aggregator.submitCommitment(601, bytes("payload 601"), bytes("auth 601"));
-        aggregator.submitCommitment(602, bytes("payload 602"), bytes("auth 602"));
-        aggregator.submitCommitment(603, bytes("payload 603"), bytes("auth 603"));
-        aggregator.submitCommitment(604, bytes("payload 604"), bytes("auth 604"));
-        aggregator.submitCommitment(605, bytes("payload 605"), bytes("auth 605"));
+        aggregator.submitCommitment(bytes("request_601"), bytes("payload 601"), bytes("auth 601"));
+        aggregator.submitCommitment(bytes("request_602"), bytes("payload 602"), bytes("auth 602"));
+        aggregator.submitCommitment(bytes("request_603"), bytes("payload 603"), bytes("auth 603"));
+        aggregator.submitCommitment(bytes("request_604"), bytes("payload 604"), bytes("auth 604"));
+        aggregator.submitCommitment(bytes("request_605"), bytes("payload 605"), bytes("auth 605"));
         vm.stopPrank();
 
         // Create the first batch with the first 3 requests (601, 602, 603)
-        uint256[] memory firstBatchRequestIDs = new uint256[](3);
-        firstBatchRequestIDs[0] = 601;
-        firstBatchRequestIDs[1] = 602;
-        firstBatchRequestIDs[2] = 603;
+        bytes[] memory firstBatchRequestIDs = new bytes[](3);
+        firstBatchRequestIDs[0] = bytes("request_601");
+        firstBatchRequestIDs[1] = bytes("request_602");
+        firstBatchRequestIDs[2] = bytes("request_603");
 
         vm.prank(trustedAggregators[0]);
         aggregator.createBatchForRequests(firstBatchRequestIDs);
 
         // Verify the unprocessed pool no longer contains the first 3 requests
-        assertFalse(aggregator.isRequestUnprocessed(601), "Request 601 should no longer be in unprocessed pool");
-        assertFalse(aggregator.isRequestUnprocessed(602), "Request 602 should no longer be in unprocessed pool");
-        assertFalse(aggregator.isRequestUnprocessed(603), "Request 603 should no longer be in unprocessed pool");
-        assertTrue(aggregator.isRequestUnprocessed(604), "Request 604 should still be in unprocessed pool");
-        assertTrue(aggregator.isRequestUnprocessed(605), "Request 605 should still be in unprocessed pool");
+        assertFalse(aggregator.isRequestUnprocessed(bytes("request_601")), "Request 601 should no longer be in unprocessed pool");
+        assertFalse(aggregator.isRequestUnprocessed(bytes("request_602")), "Request 602 should no longer be in unprocessed pool");
+        assertFalse(aggregator.isRequestUnprocessed(bytes("request_603")), "Request 603 should no longer be in unprocessed pool");
+        assertTrue(aggregator.isRequestUnprocessed(bytes("request_604")), "Request 604 should still be in unprocessed pool");
+        assertTrue(aggregator.isRequestUnprocessed(bytes("request_605")), "Request 605 should still be in unprocessed pool");
 
         // Now try to create a second batch that tries to include some already batched requests
         // Specifically, requests 603, 604, 605 (where 603 is already in batch1)
-        uint256[] memory secondBatchRequestIDs = new uint256[](3);
-        secondBatchRequestIDs[0] = 603; // Already in batch1
-        secondBatchRequestIDs[1] = 604; // Not yet in a batch
-        secondBatchRequestIDs[2] = 605; // Not yet in a batch
+        bytes[] memory secondBatchRequestIDs = new bytes[](3);
+        secondBatchRequestIDs[0] = bytes("request_603"); // Already in batch1
+        secondBatchRequestIDs[1] = bytes("request_604"); // Not yet in a batch
+        secondBatchRequestIDs[2] = bytes("request_605"); // Not yet in a batch
 
         vm.prank(trustedAggregators[0]);
         uint256 batch2 = aggregator.createBatchForRequests(secondBatchRequestIDs);
@@ -698,8 +687,8 @@ contract AggregatorBatchesTest is Test {
         bool found605 = false;
 
         for (uint256 i = 0; i < batch2Requests.length; i++) {
-            if (batch2Requests[i].requestID == 604) found604 = true;
-            if (batch2Requests[i].requestID == 605) found605 = true;
+            if (keccak256(batch2Requests[i].requestID) == keccak256(bytes("request_604"))) found604 = true;
+            if (keccak256(batch2Requests[i].requestID) == keccak256(bytes("request_605"))) found605 = true;
         }
 
         assertTrue(found604, "Batch 2 should contain request 604");
@@ -707,10 +696,10 @@ contract AggregatorBatchesTest is Test {
 
         // Verify we can now resubmit the exact same commitment without modifying it
         vm.prank(trustedAggregators[0]);
-        aggregator.submitCommitment(601, bytes("payload 601"), bytes("auth 601"));
+        aggregator.submitCommitment(bytes("request_601"), bytes("payload 601"), bytes("auth 601"));
 
         // It should NOT be added back to the unprocessed pool
-        assertFalse(aggregator.isRequestUnprocessed(601), "Request 601 should not be added back to unprocessed pool");
+        assertFalse(aggregator.isRequestUnprocessed(bytes("request_601")), "Request 601 should not be added back to unprocessed pool");
 
         // Special test for the critical edge case: test the robustness of our filtering
         // by simulating a request that is in the unprocessed pool but also marked as batched
@@ -719,13 +708,13 @@ contract AggregatorBatchesTest is Test {
         // Instead of trying to manipulate storage, simply create a new test case that's cleaner
         // Create new test requests so we have a clean state to work with
         vm.startPrank(trustedAggregators[0]);
-        aggregator.submitCommitment(701, bytes("edge payload 701"), bytes("edge auth 701"));
-        aggregator.submitCommitment(702, bytes("edge payload 702"), bytes("edge auth 702"));
+        aggregator.submitCommitment(bytes("request_701"), bytes("edge payload 701"), bytes("edge auth 701"));
+        aggregator.submitCommitment(bytes("request_702"), bytes("edge payload 702"), bytes("edge auth 702"));
         vm.stopPrank();
 
         // Create a batch with request 701 only, this properly marks it as batched
-        uint256[] memory firstEdgeBatchIDs = new uint256[](1);
-        firstEdgeBatchIDs[0] = 701;
+        bytes[] memory firstEdgeBatchIDs = new bytes[](1);
+        firstEdgeBatchIDs[0] = bytes("request_701");
 
         vm.prank(trustedAggregators[0]);
         aggregator.createBatchForRequests(firstEdgeBatchIDs);
@@ -734,18 +723,18 @@ contract AggregatorBatchesTest is Test {
         // To do this, we need to call submitCommitment again with exact same parameters
         // (This works because the contract only prevents modification, not exact resubmission)
         vm.prank(trustedAggregators[0]);
-        aggregator.submitCommitment(701, bytes("edge payload 701"), bytes("edge auth 701"));
+        aggregator.submitCommitment(bytes("request_701"), bytes("edge payload 701"), bytes("edge auth 701"));
 
         // Use an internal helper on the test contract to directly force 701 into the unprocessed pool
-        _forceAddToUnprocessedPool(701);
+        _forceAddToUnprocessedPool(bytes("request_701"));
 
         // Now verify that our manipulation worked and 701 appears to be in the unprocessed pool
-        assertTrue(aggregator.isRequestUnprocessed(701), "Request 701 should appear in unprocessed pool for test");
+        assertTrue(aggregator.isRequestUnprocessed(bytes("request_701")), "Request 701 should appear in unprocessed pool for test");
 
         // Try to create a batch that includes the manipulated request
-        uint256[] memory edgeCaseRequestIDs = new uint256[](2);
-        edgeCaseRequestIDs[0] = 701; // Is now in unprocessed pool but also marked as batched
-        edgeCaseRequestIDs[1] = 702; // Not yet in a batch
+        bytes[] memory edgeCaseRequestIDs = new bytes[](2);
+        edgeCaseRequestIDs[0] = bytes("request_701"); // Is now in unprocessed pool but also marked as batched
+        edgeCaseRequestIDs[1] = bytes("request_702"); // Not yet in a batch
 
         vm.prank(trustedAggregators[0]);
         uint256 batch3 = aggregator.createBatchForRequests(edgeCaseRequestIDs);
@@ -753,12 +742,12 @@ contract AggregatorBatchesTest is Test {
         // Verify the edge case batch only contains request 702, filtering out 701 despite it being in unprocessed pool
         (IAggregatorBatches.CommitmentRequest[] memory batch3Requests,,) = aggregator.getBatch(batch3);
         assertEq(batch3Requests.length, 1, "Edge case batch should only contain 1 request (702)");
-        assertEq(batch3Requests[0].requestID, 702, "Edge case batch should only contain request 702");
+        assertEq(keccak256(batch3Requests[0].requestID), keccak256(bytes("request_702")), "Edge case batch should only contain request 702");
 
         // Try to modify a commitment that was in a batch
         vm.prank(trustedAggregators[0]);
         vm.expectRevert("Cannot modify a commitment that was previously in a batch");
-        aggregator.submitCommitment(601, bytes("different payload"), bytes("auth 601"));
+        aggregator.submitCommitment(bytes("request_601"), bytes("different payload"), bytes("auth 601"));
     }
 
     function testGetLatestUnprocessedBatch() public {
@@ -766,15 +755,15 @@ contract AggregatorBatchesTest is Test {
         vm.startPrank(trustedAggregators[0]);
 
         // First batch
-        aggregator.submitCommitment(10, bytes("payload 10"), bytes("auth 10"));
+        aggregator.submitCommitment(bytes("request_10"), bytes("payload 10"), bytes("auth 10"));
         aggregator.createBatch();
 
         // Second batch
-        aggregator.submitCommitment(20, bytes("payload 20"), bytes("auth 20"));
+        aggregator.submitCommitment(bytes("request_20"), bytes("payload 20"), bytes("auth 20"));
         aggregator.createBatch();
 
         // Third batch
-        aggregator.submitCommitment(30, bytes("payload 30"), bytes("auth 30"));
+        aggregator.submitCommitment(bytes("request_30"), bytes("payload 30"), bytes("auth 30"));
         uint256 batch3 = aggregator.createBatch();
         vm.stopPrank();
 
@@ -785,7 +774,7 @@ contract AggregatorBatchesTest is Test {
         // Should return the latest batch (batch3)
         assertEq(latestBatchNum, batch3, "Should return the latest unprocessed batch");
         assertEq(requests.length, 1, "Batch should contain 1 request");
-        assertEq(requests[0].requestID, 30, "Latest batch should contain request 30");
+        assertEq(keccak256(requests[0].requestID), keccak256(bytes("request_30")), "Latest batch should contain request 30");
 
         // Process batches 1 and 2
         bytes memory hashroot = bytes("test hashroot");
@@ -848,7 +837,7 @@ contract AggregatorBatchesTest is Test {
         // Try to submit commitment as non-aggregator
         vm.prank(nonAggregator);
         vm.expectRevert("Caller is not a trusted aggregator");
-        aggregator.submitCommitment(1, bytes("test"), bytes("test"));
+        aggregator.submitCommitment(bytes("request_1"), bytes("test"), bytes("test"));
     }
 
     function testCreateBatchAsNonAggregator() public {
@@ -859,8 +848,8 @@ contract AggregatorBatchesTest is Test {
     }
 
     function testCreateBatchForRequestsAsNonAggregator() public {
-        uint256[] memory requestIDs = new uint256[](1);
-        requestIDs[0] = 1;
+        bytes[] memory requestIDs = new bytes[](1);
+        requestIDs[0] = bytes("request_1");
 
         // Try to create batch as non-aggregator
         vm.prank(nonAggregator);
@@ -871,7 +860,7 @@ contract AggregatorBatchesTest is Test {
     function testSubmitHashrootAsNonAggregator() public {
         // Setup a batch
         vm.prank(trustedAggregators[0]);
-        aggregator.submitCommitment(1, bytes("test"), bytes("test"));
+        aggregator.submitCommitment(bytes("request_1"), bytes("test"), bytes("test"));
 
         vm.prank(trustedAggregators[0]);
         uint256 batchNumber = aggregator.createBatch();
@@ -885,7 +874,7 @@ contract AggregatorBatchesTest is Test {
     function testSubmitHashrootForProcessedBatch() public {
         // Setup and process a batch
         vm.prank(trustedAggregators[0]);
-        aggregator.submitCommitment(1, bytes("test"), bytes("test"));
+        aggregator.submitCommitment(bytes("request_1"), bytes("test"), bytes("test"));
 
         vm.prank(trustedAggregators[0]);
         uint256 batchNumber = aggregator.createBatch();
@@ -918,7 +907,7 @@ contract AggregatorBatchesTest is Test {
     function testVoteSameHashrootTwice() public {
         // Setup a batch
         vm.prank(trustedAggregators[0]);
-        aggregator.submitCommitment(1, bytes("test"), bytes("test"));
+        aggregator.submitCommitment(bytes("request_1"), bytes("test"), bytes("test"));
 
         vm.prank(trustedAggregators[0]);
         uint256 batchNumber = aggregator.createBatch();
@@ -954,27 +943,29 @@ contract AggregatorBatchesTest is Test {
         // Create several commitments
         for (uint256 i = 1; i <= 10; i++) {
             aggregator.submitCommitment(
-                900 + i, bytes(abi.encodePacked("test-payload-", i)), bytes(abi.encodePacked("test-auth-", i))
+                bytes(abi.encodePacked("request_", 900+i)), 
+                bytes(abi.encodePacked("test-payload-", i)), 
+                bytes(abi.encodePacked("test-auth-", i))
             );
         }
 
         // Create batch 1
-        uint256[] memory batch1Ids = new uint256[](2);
-        batch1Ids[0] = 901;
-        batch1Ids[1] = 902;
+        bytes[] memory batch1Ids = new bytes[](2);
+        batch1Ids[0] = bytes(abi.encodePacked("request_", uint256(901)));
+        batch1Ids[1] = bytes(abi.encodePacked("request_", uint256(902)));
         uint256 batch1Number = aggregator.createBatchForRequests(batch1Ids);
 
         // Create batch 5 (with explicit number - creates a gap)
-        uint256[] memory batch5Ids = new uint256[](2);
-        batch5Ids[0] = 905;
-        batch5Ids[1] = 906;
+        bytes[] memory batch5Ids = new bytes[](2);
+        batch5Ids[0] = bytes(abi.encodePacked("request_", uint256(905)));
+        batch5Ids[1] = bytes(abi.encodePacked("request_", uint256(906)));
         uint256 batch5Number = 5;
         aggregator.createBatchForRequestsWithNumber(batch5Ids, batch5Number);
 
         // Create batch 10 (with explicit number - creates another gap)
-        uint256[] memory batch10Ids = new uint256[](2);
-        batch10Ids[0] = 909;
-        batch10Ids[1] = 910;
+        bytes[] memory batch10Ids = new bytes[](2);
+        batch10Ids[0] = bytes(abi.encodePacked("request_", uint256(909)));
+        batch10Ids[1] = bytes(abi.encodePacked("request_", uint256(910)));
         uint256 batch10Number = 10;
         aggregator.createBatchForRequestsWithNumber(batch10Ids, batch10Number);
         vm.stopPrank();
@@ -1019,10 +1010,10 @@ contract AggregatorBatchesTest is Test {
 
         // TEST CASE 6: Create a batch between 1 and 5 (batch 3)
         vm.prank(trustedAggregators[0]);
-        aggregator.submitCommitment(903, bytes("test-payload-3"), bytes("test-auth-3"));
+        aggregator.submitCommitment(bytes(abi.encodePacked("request_", uint256(903))), bytes("test-payload-3"), bytes("test-auth-3"));
 
-        uint256[] memory batch3Ids = new uint256[](1);
-        batch3Ids[0] = 903;
+        bytes[] memory batch3Ids = new bytes[](1);
+        batch3Ids[0] = bytes(abi.encodePacked("request_", uint256(903)));
         uint256 batch3Number = 3;
 
         vm.prank(trustedAggregators[0]);
@@ -1040,8 +1031,8 @@ contract AggregatorBatchesTest is Test {
         vm.stopPrank();
 
         // TEST CASE 8: Create and process batch 2 first (filling the gap)
-        uint256[] memory batch2Ids = new uint256[](1);
-        batch2Ids[0] = 904; // Use another request for batch 2
+        bytes[] memory batch2Ids = new bytes[](1);
+        batch2Ids[0] = bytes(abi.encodePacked("request_", uint256(904))); // Use another request for batch 2
         uint256 batch2Number = 2;
 
         vm.prank(trustedAggregators[0]);
@@ -1079,8 +1070,8 @@ contract AggregatorBatchesTest is Test {
         aggregator.submitHashroot(batch5Number, bytes("test-hashroot"));
 
         // Create and process batch 4
-        uint256[] memory batch4Ids = new uint256[](1);
-        batch4Ids[0] = 907; // Use another available request ID
+        bytes[] memory batch4Ids = new bytes[](1);
+        batch4Ids[0] = bytes(abi.encodePacked("request_", uint256(907))); // Use another available request ID
         uint256 batch4Number = 4;
 
         vm.prank(trustedAggregators[0]);
@@ -1114,8 +1105,8 @@ contract AggregatorBatchesTest is Test {
         vm.stopPrank();
 
         // Try to create batch 7 with the same request ID as batch 6 - should fail
-        uint256[] memory sameRequestIds = new uint256[](1);
-        sameRequestIds[0] = 908;
+        bytes[] memory sameRequestIds = new bytes[](1);
+        sameRequestIds[0] = bytes(abi.encodePacked("request_", uint256(908)));
 
         // Create batch 6 first
         vm.prank(trustedAggregators[0]);
@@ -1137,9 +1128,9 @@ contract AggregatorBatchesTest is Test {
         // Create remaining batches with new request IDs
         // Create batch 7
         vm.prank(trustedAggregators[0]);
-        aggregator.submitCommitment(1007, bytes("batch-7"), bytes("auth-7"));
-        uint256[] memory batch7Ids = new uint256[](1);
-        batch7Ids[0] = 1007;
+        aggregator.submitCommitment(bytes(abi.encodePacked("request_", uint256(1007))), bytes("batch-7"), bytes("auth-7"));
+        bytes[] memory batch7Ids = new bytes[](1);
+        batch7Ids[0] = bytes(abi.encodePacked("request_", uint256(1007)));
         vm.prank(trustedAggregators[0]);
         aggregator.createBatchForRequestsWithNumber(batch7Ids, 7);
 
@@ -1152,9 +1143,9 @@ contract AggregatorBatchesTest is Test {
 
         // Create batch 8
         vm.prank(trustedAggregators[0]);
-        aggregator.submitCommitment(1008, bytes("batch-8"), bytes("auth-8"));
-        uint256[] memory batch8Ids = new uint256[](1);
-        batch8Ids[0] = 1008;
+        aggregator.submitCommitment(bytes(abi.encodePacked("request_", uint256(1008))), bytes("batch-8"), bytes("auth-8"));
+        bytes[] memory batch8Ids = new bytes[](1);
+        batch8Ids[0] = bytes(abi.encodePacked("request_", uint256(1008)));
         vm.prank(trustedAggregators[0]);
         aggregator.createBatchForRequestsWithNumber(batch8Ids, 8);
 
@@ -1167,9 +1158,10 @@ contract AggregatorBatchesTest is Test {
 
         // Create batch 9
         vm.prank(trustedAggregators[0]);
-        aggregator.submitCommitment(1009, bytes("batch-9"), bytes("auth-9"));
-        uint256[] memory batch9Ids = new uint256[](1);
-        batch9Ids[0] = 1009;
+        bytes memory requestId9 = bytes(abi.encodePacked("request_", uint256(1009)));
+        aggregator.submitCommitment(requestId9, bytes("batch-9"), bytes("auth-9"));
+        bytes[] memory batch9Ids = new bytes[](1);
+        batch9Ids[0] = requestId9;
         vm.prank(trustedAggregators[0]);
         aggregator.createBatchForRequestsWithNumber(batch9Ids, 9);
 
@@ -1214,7 +1206,7 @@ contract AggregatorBatchesTest is Test {
         // Create several commitments
         for (uint256 i = 1; i <= 15; i++) {
             aggregator.submitCommitment(
-                100 + i, bytes(abi.encodePacked("payload-", i)), bytes(abi.encodePacked("auth-", i))
+                bytes(abi.encodePacked("request_", 100 + i)), bytes(abi.encodePacked("payload-", i)), bytes(abi.encodePacked("auth-", i))
             );
         }
 
@@ -1222,8 +1214,8 @@ contract AggregatorBatchesTest is Test {
         assertEq(aggregator.getNextAutoNumberedBatch(), 1, "Initial auto-numbered batch should be 1");
 
         // Create batch 1 (auto-assigned number)
-        uint256[] memory batch1Ids = new uint256[](1);
-        batch1Ids[0] = 101;
+        bytes[] memory batch1Ids = new bytes[](1);
+        batch1Ids[0] = bytes(abi.encodePacked("request_", uint256(101)));
         uint256 batch1 = aggregator.createBatchForRequests(batch1Ids);
         assertEq(batch1, 1, "First batch should be number 1");
 
@@ -1231,8 +1223,8 @@ contract AggregatorBatchesTest is Test {
         assertEq(aggregator.getNextAutoNumberedBatch(), 2, "Next auto-numbered batch should be 2");
 
         // Now create batch 3 (skipping 2) with explicit numbering
-        uint256[] memory batch3Ids = new uint256[](1);
-        batch3Ids[0] = 111;
+        bytes[] memory batch3Ids = new bytes[](1);
+        batch3Ids[0] = bytes(abi.encodePacked("request_", uint256(111)));
         uint256 batch3Number = 3;
         aggregator.createBatchForRequestsWithNumber(batch3Ids, batch3Number);
 
@@ -1242,8 +1234,8 @@ contract AggregatorBatchesTest is Test {
         );
 
         // Create batch 5 with explicit numbering (creating a gap)
-        uint256[] memory batch5Ids = new uint256[](1);
-        batch5Ids[0] = 102;
+        bytes[] memory batch5Ids = new bytes[](1);
+        batch5Ids[0] = bytes(abi.encodePacked("request_", uint256(102)));
         uint256 batch5 = 5;
         aggregator.createBatchForRequestsWithNumber(batch5Ids, batch5);
 
@@ -1252,8 +1244,8 @@ contract AggregatorBatchesTest is Test {
         assertEq(aggregator.getNextAutoNumberedBatch(), 2, "Next auto-numbered batch should still be 2");
 
         // Now create a batch with auto-numbering - should be batch 2 (filling the gap)
-        uint256[] memory batch2Ids = new uint256[](1);
-        batch2Ids[0] = 103;
+        bytes[] memory batch2Ids = new bytes[](1);
+        batch2Ids[0] = bytes(abi.encodePacked("request_", uint256(103)));
         uint256 batch2 = aggregator.createBatchForRequests(batch2Ids);
         assertEq(batch2, 2, "Auto-numbered batch should fill gap with number 2");
 
@@ -1263,14 +1255,14 @@ contract AggregatorBatchesTest is Test {
         );
 
         // Create another auto-numbered batch - should be batch 4
-        uint256[] memory autoNumBatch4Ids = new uint256[](1);
-        autoNumBatch4Ids[0] = 104;
+        bytes[] memory autoNumBatch4Ids = new bytes[](1);
+        autoNumBatch4Ids[0] = bytes(abi.encodePacked("request_", uint256(104)));
         uint256 batch4 = aggregator.createBatchForRequests(autoNumBatch4Ids);
         assertEq(batch4, 4, "Auto-numbered batch should be 4");
 
         // Create batch 10 with explicit numbering (creating another gap)
-        uint256[] memory batch10Ids = new uint256[](1);
-        batch10Ids[0] = 105;
+        bytes[] memory batch10Ids = new bytes[](1);
+        batch10Ids[0] = bytes(abi.encodePacked("request_", uint256(105)));
         uint256 batch10 = 10;
         aggregator.createBatchForRequestsWithNumber(batch10Ids, batch10);
 
@@ -1281,14 +1273,14 @@ contract AggregatorBatchesTest is Test {
         // Create more commitments for the remaining batches
         for (uint256 i = 0; i < 10; i++) {
             aggregator.submitCommitment(
-                200 + i, bytes(abi.encodePacked("new-payload-", i)), bytes(abi.encodePacked("new-auth-", i))
+                bytes(abi.encodePacked("request_", 200 + i)), bytes(abi.encodePacked("new-payload-", i)), bytes(abi.encodePacked("new-auth-", i))
             );
         }
 
         // Fill the remaining gaps (6,7,8,9) with auto-numbered batches
         for (uint256 i = 6; i <= 9; i++) {
-            uint256[] memory ids = new uint256[](1);
-            ids[0] = 200 + (i - 6); // Use the new request IDs
+            bytes[] memory ids = new bytes[](1);
+            ids[0] = bytes(abi.encodePacked("request_", 200 + (i - 6))); // Use the new request IDs
             uint256 batchNum = aggregator.createBatchForRequests(ids);
             assertEq(batchNum, i, string(abi.encodePacked("Auto-numbered batch should be ", i)));
 
@@ -1302,8 +1294,8 @@ contract AggregatorBatchesTest is Test {
         }
 
         // Create one more batch - should be 11 (after all gaps are filled)
-        uint256[] memory batch11Ids = new uint256[](1);
-        batch11Ids[0] = 209; // Use the last new request ID
+        bytes[] memory batch11Ids = new bytes[](1);
+        batch11Ids[0] = bytes(abi.encodePacked("request_", uint256(209))); // Use the last new request ID
         uint256 batch11 = aggregator.createBatchForRequests(batch11Ids);
         assertEq(batch11, 11, "Next auto-numbered batch after all gaps filled should be 11");
 
@@ -1329,28 +1321,28 @@ contract AggregatorBatchesTest is Test {
         // Group 1: For explicit batch 2, 4, 7, 9
         for (uint256 i = 1; i <= 4; i++) {
             aggregator.submitCommitment(
-                1000 + i, bytes(abi.encodePacked("group1-payload-", i)), bytes(abi.encodePacked("group1-auth-", i))
+                bytes(abi.encodePacked("request_", 1000 + i)), bytes(abi.encodePacked("group1-payload-", i)), bytes(abi.encodePacked("group1-auth-", i))
             );
         }
 
         // Create batch 2
-        uint256[] memory batch2Ids = new uint256[](1);
-        batch2Ids[0] = 1001;
+        bytes[] memory batch2Ids = new bytes[](1);
+        batch2Ids[0] = bytes(abi.encodePacked("request_", uint256(1001)));
         aggregator.createBatchForRequestsWithNumber(batch2Ids, 2);
 
         // Create batch 4
-        uint256[] memory batch4Ids = new uint256[](1);
-        batch4Ids[0] = 1002;
+        bytes[] memory batch4Ids = new bytes[](1);
+        batch4Ids[0] = bytes(abi.encodePacked("request_", uint256(1002)));
         aggregator.createBatchForRequestsWithNumber(batch4Ids, 4);
 
         // Create batch 7
-        uint256[] memory batch7Ids = new uint256[](1);
-        batch7Ids[0] = 1003;
+        bytes[] memory batch7Ids = new bytes[](1);
+        batch7Ids[0] = bytes(abi.encodePacked("request_", uint256(1003)));
         aggregator.createBatchForRequestsWithNumber(batch7Ids, 7);
 
         // Create batch 9
-        uint256[] memory batch9Ids = new uint256[](1);
-        batch9Ids[0] = 1004;
+        bytes[] memory batch9Ids = new bytes[](1);
+        batch9Ids[0] = bytes(abi.encodePacked("request_", uint256(1004)));
         aggregator.createBatchForRequestsWithNumber(batch9Ids, 9);
 
         // Verify state after creating gaps
@@ -1362,7 +1354,7 @@ contract AggregatorBatchesTest is Test {
         // Add commitments for the first batch
         for (uint256 i = 1; i <= 3; i++) {
             aggregator.submitCommitment(
-                1100 + i, bytes(abi.encodePacked("batch1-payload-", i)), bytes(abi.encodePacked("batch1-auth-", i))
+                bytes(abi.encodePacked("request_", 1100 + i)), bytes(abi.encodePacked("batch1-payload-", i)), bytes(abi.encodePacked("batch1-auth-", i))
             );
         }
         uint256 autoBatch1 = aggregator.createBatch();
@@ -1374,9 +1366,9 @@ contract AggregatorBatchesTest is Test {
         // TEST METHOD 2: createBatchForRequests()
         // This should create batch 3 (filling the next gap)
         // Add a commitment for batch 3
-        aggregator.submitCommitment(2001, bytes("batch3-payload"), bytes("batch3-auth"));
-        uint256[] memory requestIds = new uint256[](1);
-        requestIds[0] = 2001;
+        aggregator.submitCommitment(bytes(abi.encodePacked("request_", uint256(2001))), bytes("batch3-payload"), bytes("batch3-auth"));
+        bytes[] memory requestIds = new bytes[](1);
+        requestIds[0] = bytes(abi.encodePacked("request_", uint256(2001)));
         uint256 autoBatch3 = aggregator.createBatchForRequests(requestIds);
         assertEq(autoBatch3, 3, "createBatchForRequests() should fill gap 3");
 
@@ -1388,13 +1380,13 @@ contract AggregatorBatchesTest is Test {
         IAggregatorBatches.CommitmentRequest[] memory newRequests = new IAggregatorBatches.CommitmentRequest[](2);
 
         newRequests[0] = IAggregatorBatches.CommitmentRequest({
-            requestID: 3001,
+            requestID: bytes(abi.encodePacked("request_", uint256(3001))),
             payload: bytes("batch5-payload-1"),
             authenticator: bytes("batch5-auth-1")
         });
 
         newRequests[1] = IAggregatorBatches.CommitmentRequest({
-            requestID: 3002,
+            requestID: bytes(abi.encodePacked("request_", uint256(3002))),
             payload: bytes("batch5-payload-2"),
             authenticator: bytes("batch5-auth-2")
         });
@@ -1415,25 +1407,25 @@ contract AggregatorBatchesTest is Test {
         // Check batch 3 (created with createBatchForRequests)
         (IAggregatorBatches.CommitmentRequest[] memory batch3Requests,,) = aggregator.getBatch(3);
         assertEq(batch3Requests.length, 1, "Batch 3 should contain 1 commitment");
-        assertEq(batch3Requests[0].requestID, 2001, "Batch 3 should contain request ID 2001");
+        assertEq(keccak256(batch3Requests[0].requestID), keccak256(bytes(abi.encodePacked("request_", uint256(2001)))), "Batch 3 should contain request ID 2001");
 
         // Check batch 5 (created with submitAndCreateBatch)
         (IAggregatorBatches.CommitmentRequest[] memory batch5Requests,,) = aggregator.getBatch(5);
         assertEq(batch5Requests.length, 2, "Batch 5 should contain 2 commitments");
-        assertEq(batch5Requests[0].requestID, 3001, "Batch 5 should contain request ID 3001");
-        assertEq(batch5Requests[1].requestID, 3002, "Batch 5 should contain request ID 3002");
+        assertEq(keccak256(batch5Requests[0].requestID), keccak256(bytes(abi.encodePacked("request_", uint256(3001)))), "Batch 5 should contain request ID 3001");
+        assertEq(keccak256(batch5Requests[1].requestID), keccak256(bytes(abi.encodePacked("request_", uint256(3002)))), "Batch 5 should contain request ID 3002");
 
         // Create one more gap at 8
-        aggregator.submitCommitment(2003, bytes("batch8-payload"), bytes("batch8-auth"));
-        uint256[] memory batch8Ids = new uint256[](1);
-        batch8Ids[0] = 2003;
+        aggregator.submitCommitment(bytes(abi.encodePacked("request_", uint256(2003))), bytes("batch8-payload"), bytes("batch8-auth"));
+        bytes[] memory batch8Ids = new bytes[](1);
+        batch8Ids[0] = bytes(abi.encodePacked("request_", uint256(2003)));
         aggregator.createBatchForRequestsWithNumber(batch8Ids, 8);
 
         // Now test createBatch will fill gap 6
         // Add some commitments for batch 6
         for (uint256 i = 1; i <= 2; i++) {
             aggregator.submitCommitment(
-                4000 + i, bytes(abi.encodePacked("batch6-payload-", i)), bytes(abi.encodePacked("batch6-auth-", i))
+                bytes(abi.encodePacked("request_", 4000 + i)), bytes(abi.encodePacked("batch6-payload-", i)), bytes(abi.encodePacked("batch6-auth-", i))
             );
         }
 
@@ -1453,7 +1445,7 @@ contract AggregatorBatchesTest is Test {
 
         // Verify the new aggregator can perform trusted actions
         vm.prank(newAggregator);
-        aggregator.submitCommitment(1, bytes("test"), bytes("test"));
+        aggregator.submitCommitment(bytes("request_1"), bytes("test"), bytes("test"));
 
         // Try to add an existing aggregator - should revert
         vm.expectRevert("Aggregator already exists");
@@ -1467,7 +1459,7 @@ contract AggregatorBatchesTest is Test {
         // Verify the removed aggregator can no longer perform trusted actions
         vm.prank(trustedAggregators[2]);
         vm.expectRevert("Caller is not a trusted aggregator");
-        aggregator.submitCommitment(1, bytes("test"), bytes("test"));
+        aggregator.submitCommitment(bytes("request_1"), bytes("test"), bytes("test"));
 
         // Try to remove a non-existent aggregator - should revert
         vm.expectRevert("Aggregator does not exist");
@@ -1485,7 +1477,7 @@ contract AggregatorBatchesTest is Test {
 
         // Verify a batch can be processed with just 1 vote now
         vm.prank(trustedAggregators[0]);
-        aggregator.submitCommitment(1, bytes("test"), bytes("test"));
+        aggregator.submitCommitment(bytes("request_1"), bytes("test"), bytes("test"));
 
         vm.prank(trustedAggregators[0]);
         uint256 batchNumber = aggregator.createBatch();
@@ -1555,17 +1547,17 @@ contract AggregatorBatchesTest is Test {
     function testCreateBatchWithExplicitNumber() public {
         // Submit several commitments
         vm.startPrank(trustedAggregators[0]);
-        aggregator.submitCommitment(201, bytes("payload 201"), bytes("auth 201"));
-        aggregator.submitCommitment(202, bytes("payload 202"), bytes("auth 202"));
-        aggregator.submitCommitment(203, bytes("payload 203"), bytes("auth 203"));
-        aggregator.submitCommitment(204, bytes("payload 204"), bytes("auth 204"));
-        aggregator.submitCommitment(205, bytes("payload 205"), bytes("auth 205"));
+        aggregator.submitCommitment(bytes("request_201"), bytes("payload 201"), bytes("auth 201"));
+        aggregator.submitCommitment(bytes("request_202"), bytes("payload 202"), bytes("auth 202"));
+        aggregator.submitCommitment(bytes("request_203"), bytes("payload 203"), bytes("auth 203"));
+        aggregator.submitCommitment(bytes("request_204"), bytes("payload 204"), bytes("auth 204"));
+        aggregator.submitCommitment(bytes("request_205"), bytes("payload 205"), bytes("auth 205"));
         vm.stopPrank();
 
         // Create batch with a high batch number (creates a gap)
-        uint256[] memory requestIds = new uint256[](2);
-        requestIds[0] = 201;
-        requestIds[1] = 202;
+        bytes[] memory requestIds = new bytes[](2);
+        requestIds[0] = bytes("request_201");
+        requestIds[1] = bytes("request_202");
 
         uint256 explicitBatchNumber = 10; // Create batch #10
 
@@ -1583,9 +1575,9 @@ contract AggregatorBatchesTest is Test {
         assertEq(batch10Requests.length, 2, "Batch 10 should have 2 requests");
 
         // Create a second batch with a different explicit number (lower than the first one)
-        uint256[] memory requestIds2 = new uint256[](2);
-        requestIds2[0] = 203;
-        requestIds2[1] = 204;
+        bytes[] memory requestIds2 = new bytes[](2);
+        requestIds2[0] = bytes("request_203");
+        requestIds2[1] = bytes("request_204");
 
         uint256 explicitBatchNumber2 = 5; // Create batch #5
 
@@ -1603,8 +1595,8 @@ contract AggregatorBatchesTest is Test {
         assertEq(batch5Requests.length, 2, "Batch 5 should have 2 requests");
 
         // Try to create batch with already used batch number (should revert)
-        uint256[] memory requestIds3 = new uint256[](1);
-        requestIds3[0] = 205;
+        bytes[] memory requestIds3 = new bytes[](1);
+        requestIds3[0] = bytes("request_205");
 
         vm.prank(trustedAggregators[0]);
         vm.expectRevert("Batch number already exists");
@@ -1618,37 +1610,37 @@ contract AggregatorBatchesTest is Test {
         // First, create batches 1-4 explicitly (batch 5 already exists)
 
         // Create batch 1
-        uint256 newReqId1 = 301;
+        bytes memory newReqId1 = bytes("request_301");
         vm.prank(trustedAggregators[0]);
         aggregator.submitCommitment(newReqId1, bytes("batch 1 payload"), bytes("batch 1 auth"));
-        uint256[] memory batch1Ids = new uint256[](1);
+        bytes[] memory batch1Ids = new bytes[](1);
         batch1Ids[0] = newReqId1;
         vm.prank(trustedAggregators[0]);
         aggregator.createBatchForRequestsWithNumber(batch1Ids, 1);
 
         // Create batch 2
-        uint256 newReqId2 = 302;
+        bytes memory newReqId2 = bytes("request_302");
         vm.prank(trustedAggregators[0]);
         aggregator.submitCommitment(newReqId2, bytes("batch 2 payload"), bytes("batch 2 auth"));
-        uint256[] memory batch2Ids = new uint256[](1);
+        bytes[] memory batch2Ids = new bytes[](1);
         batch2Ids[0] = newReqId2;
         vm.prank(trustedAggregators[0]);
         aggregator.createBatchForRequestsWithNumber(batch2Ids, 2);
 
         // Create batch 3
-        uint256 newReqId3 = 303;
+        bytes memory newReqId3 = bytes("request_303");
         vm.prank(trustedAggregators[0]);
         aggregator.submitCommitment(newReqId3, bytes("batch 3 payload"), bytes("batch 3 auth"));
-        uint256[] memory batch3Ids = new uint256[](1);
+        bytes[] memory batch3Ids = new bytes[](1);
         batch3Ids[0] = newReqId3;
         vm.prank(trustedAggregators[0]);
         aggregator.createBatchForRequestsWithNumber(batch3Ids, 3);
 
         // Create batch 4
-        uint256 newReqId4 = 304;
+        bytes memory newReqId4 = bytes("request_304");
         vm.prank(trustedAggregators[0]);
         aggregator.submitCommitment(newReqId4, bytes("batch 4 payload"), bytes("batch 4 auth"));
-        uint256[] memory batch4Ids = new uint256[](1);
+        bytes[] memory batch4Ids = new bytes[](1);
         batch4Ids[0] = newReqId4;
         vm.prank(trustedAggregators[0]);
         aggregator.createBatchForRequestsWithNumber(batch4Ids, 4);
@@ -1702,37 +1694,37 @@ contract AggregatorBatchesTest is Test {
         // Create missing batches 6-9 to fill the gaps
 
         // Create batch 6
-        uint256 newReqId6 = 306;
+        bytes memory newReqId6 = bytes("request_306");
         vm.prank(trustedAggregators[0]);
         aggregator.submitCommitment(newReqId6, bytes("batch 6 payload"), bytes("batch 6 auth"));
-        uint256[] memory batch6Ids = new uint256[](1);
+        bytes[] memory batch6Ids = new bytes[](1);
         batch6Ids[0] = newReqId6;
         vm.prank(trustedAggregators[0]);
         aggregator.createBatchForRequestsWithNumber(batch6Ids, 6);
 
         // Create batch 7
-        uint256 newReqId7 = 307;
+        bytes memory newReqId7 = bytes("request_307");
         vm.prank(trustedAggregators[0]);
         aggregator.submitCommitment(newReqId7, bytes("batch 7 payload"), bytes("batch 7 auth"));
-        uint256[] memory batch7Ids = new uint256[](1);
+        bytes[] memory batch7Ids = new bytes[](1);
         batch7Ids[0] = newReqId7;
         vm.prank(trustedAggregators[0]);
         aggregator.createBatchForRequestsWithNumber(batch7Ids, 7);
 
         // Create batch 8
-        uint256 newReqId8 = 308;
+        bytes memory newReqId8 = bytes("request_308");
         vm.prank(trustedAggregators[0]);
         aggregator.submitCommitment(newReqId8, bytes("batch 8 payload"), bytes("batch 8 auth"));
-        uint256[] memory batch8Ids = new uint256[](1);
+        bytes[] memory batch8Ids = new bytes[](1);
         batch8Ids[0] = newReqId8;
         vm.prank(trustedAggregators[0]);
         aggregator.createBatchForRequestsWithNumber(batch8Ids, 8);
 
         // Create batch 9
-        uint256 newReqId9 = 309;
+        bytes memory newReqId9 = bytes("request_309");
         vm.prank(trustedAggregators[0]);
         aggregator.submitCommitment(newReqId9, bytes("batch 9 payload"), bytes("batch 9 auth"));
-        uint256[] memory batch9Ids = new uint256[](1);
+        bytes[] memory batch9Ids = new bytes[](1);
         batch9Ids[0] = newReqId9;
         vm.prank(trustedAggregators[0]);
         aggregator.createBatchForRequestsWithNumber(batch9Ids, 9);
@@ -1785,19 +1777,19 @@ contract AggregatorBatchesTest is Test {
         IAggregatorBatches.CommitmentRequest[] memory requests = new IAggregatorBatches.CommitmentRequest[](3);
 
         requests[0] = IAggregatorBatches.CommitmentRequest({
-            requestID: 301,
+            requestID: bytes("request_301"),
             payload: bytes("payload 301"),
             authenticator: bytes("auth 301")
         });
 
         requests[1] = IAggregatorBatches.CommitmentRequest({
-            requestID: 302,
+            requestID: bytes("request_302"),
             payload: bytes("payload 302"),
             authenticator: bytes("auth 302")
         });
 
         requests[2] = IAggregatorBatches.CommitmentRequest({
-            requestID: 303,
+            requestID: bytes("request_303"),
             payload: bytes("payload 303"),
             authenticator: bytes("auth 303")
         });
@@ -1822,7 +1814,7 @@ contract AggregatorBatchesTest is Test {
         // Create another batch with an explicit number different from the first
         IAggregatorBatches.CommitmentRequest[] memory requests2 = new IAggregatorBatches.CommitmentRequest[](1);
         requests2[0] = IAggregatorBatches.CommitmentRequest({
-            requestID: 304,
+            requestID: bytes("request_304"),
             payload: bytes("payload 304"),
             authenticator: bytes("auth 304")
         });
@@ -1843,9 +1835,9 @@ contract AggregatorBatchesTest is Test {
 
     function testCreateBatchForRequestsWithNoValidRequests() public {
         // Try to create batch with only invalid request IDs
-        uint256[] memory invalidRequests = new uint256[](2);
-        invalidRequests[0] = 999;
-        invalidRequests[1] = 888;
+        bytes[] memory invalidRequests = new bytes[](2);
+        invalidRequests[0] = bytes("request_999");
+        invalidRequests[1] = bytes("request_888");
 
         // Should revert because there are no valid unprocessed request IDs
         vm.prank(trustedAggregators[0]);
@@ -1857,7 +1849,7 @@ contract AggregatorBatchesTest is Test {
 
     function testGetCommitment() public {
         // Submit a commitment
-        uint256 requestID = 123;
+        bytes memory requestID = bytes("request_123");
         bytes memory payload = bytes("test payload");
         bytes memory authenticator = bytes("test authenticator");
 
@@ -1872,8 +1864,8 @@ contract AggregatorBatchesTest is Test {
         assertEq(string(request.authenticator), string(authenticator), "Authenticator should match");
 
         // Check non-existent commitment
-        IAggregatorBatches.CommitmentRequest memory emptyRequest = aggregator.getCommitment(999);
-        assertEq(emptyRequest.requestID, 0, "Non-existent request should have ID 0");
+        IAggregatorBatches.CommitmentRequest memory emptyRequest = aggregator.getCommitment(bytes("request_999"));
+        assertEq(emptyRequest.requestID.length, 0, "Non-existent request should have empty requestID");
         assertEq(emptyRequest.payload.length, 0, "Non-existent request should have empty payload");
         assertEq(emptyRequest.authenticator.length, 0, "Non-existent request should have empty authenticator");
     }
@@ -1887,7 +1879,7 @@ contract AggregatorBatchesTest is Test {
         vm.startPrank(trustedAggregators[0]);
 
         // First batch
-        aggregator.submitCommitment(10, bytes("payload 10"), bytes("auth 10"));
+        aggregator.submitCommitment(bytes("request_10"), bytes("payload 10"), bytes("auth 10"));
         aggregator.createBatch();
 
         // Check latest batch number updated
@@ -1895,10 +1887,10 @@ contract AggregatorBatchesTest is Test {
         assertEq(latestBatch, 1, "Latest batch should be 1");
 
         // Create more batches
-        aggregator.submitCommitment(20, bytes("payload 20"), bytes("auth 20"));
+        aggregator.submitCommitment(bytes("request_20"), bytes("payload 20"), bytes("auth 20"));
         aggregator.createBatch();
 
-        aggregator.submitCommitment(30, bytes("payload 30"), bytes("auth 30"));
+        aggregator.submitCommitment(bytes("request_30"), bytes("payload 30"), bytes("auth 30"));
         aggregator.createBatch();
 
         vm.stopPrank();
@@ -1928,7 +1920,7 @@ contract AggregatorBatchesTest is Test {
     function testGetBatchHashrootValidation() public {
         // Test with valid batch that has no hashroot
         vm.prank(trustedAggregators[0]);
-        aggregator.submitCommitment(1, bytes("test payload"), bytes("test authenticator"));
+        aggregator.submitCommitment(bytes("request_1"), bytes("test payload"), bytes("test authenticator"));
 
         vm.prank(trustedAggregators[0]);
         uint256 batchNumber = aggregator.createBatch();
@@ -1951,7 +1943,7 @@ contract AggregatorBatchesTest is Test {
         vm.startPrank(trustedAggregators[0]);
 
         // First batch
-        aggregator.submitCommitment(10, bytes("payload 10"), bytes("auth 10"));
+        aggregator.submitCommitment(bytes("request_10"), bytes("payload 10"), bytes("auth 10"));
         aggregator.createBatch();
 
         // Process first batch to make latestProcessedBatchNumber > 0
@@ -1966,11 +1958,11 @@ contract AggregatorBatchesTest is Test {
         vm.startPrank(trustedAggregators[0]);
 
         // Second batch
-        aggregator.submitCommitment(20, bytes("payload 20"), bytes("auth 20"));
+        aggregator.submitCommitment(bytes("request_20"), bytes("payload 20"), bytes("auth 20"));
         aggregator.createBatch();
 
         // Third batch
-        aggregator.submitCommitment(30, bytes("payload 30"), bytes("auth 30"));
+        aggregator.submitCommitment(bytes("request_30"), bytes("payload 30"), bytes("auth 30"));
         uint256 batch3 = aggregator.createBatch();
         vm.stopPrank();
 
@@ -1982,7 +1974,7 @@ contract AggregatorBatchesTest is Test {
 
         // Create batch 4
         vm.prank(trustedAggregators[0]);
-        aggregator.submitCommitment(40, bytes("payload 40"), bytes("auth 40"));
+        aggregator.submitCommitment(bytes("request_40"), bytes("payload 40"), bytes("auth 40"));
         vm.prank(trustedAggregators[0]);
         uint256 batch4 = aggregator.createBatch();
 
@@ -1993,7 +1985,7 @@ contract AggregatorBatchesTest is Test {
 
         assertEq(latestBatchNum, batch4, "Latest unprocessed batch should be batch 4");
         assertEq(requests.length, 1, "Batch should contain 1 request");
-        assertEq(requests[0].requestID, 40, "Request should be ID 40");
+        assertEq(keccak256(requests[0].requestID), keccak256(bytes("request_40")), "Request should be ID 40");
 
         // If we try to process batch 4 before batch 3, it should revert
         vm.prank(trustedAggregators[0]);
