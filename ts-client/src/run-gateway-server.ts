@@ -17,7 +17,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { AggregatorGatewayClient } from './aggregator-gateway';
-import { SMTAggregatorNodeClient } from './aggregator-node-smt';
+import { AggregatorNodeClient } from './aggregator-node';
 import { SubmitCommitmentStatus } from './aggregator-gateway';
 import { CommitmentRequestDto } from './types';
 
@@ -55,9 +55,9 @@ const gatewayClient = new AggregatorGatewayClient({
   batchCreationInterval: fastTestMode ? 500 : 1000
 });
 
-// Initialize SMT node client for batch processing
-console.log('Initializing real SMT node client');
-const nodeClient = new SMTAggregatorNodeClient({
+// Initialize node client for batch processing
+console.log('Initializing aggregator node client with SMT support');
+const nodeClient = new AggregatorNodeClient({
   contractAddress,
   provider,
   signer: wallet,
