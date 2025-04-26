@@ -7,7 +7,9 @@ import {
   SmtNode,
   BatchRequest,
 } from './types';
-import { StandardMerkleTree } from '@openzeppelin/merkle-tree';
+import { SparseMerkleTree } from '@unicitylabs/commons/lib/smt/SparseMerkleTree.js';
+import { HashAlgorithm } from '@unicitylabs/commons/lib/hash/HashAlgorithm.js';
+import { DataHasher } from '@unicitylabs/commons/lib/hash/DataHasher.js';
 import { ethers } from 'ethers';
 import { bytesToHex, hexToBytes } from './utils';
 
@@ -23,7 +25,16 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
   private batchProcessingTimer?: NodeJS.Timeout;
   // Track which batches have been processed by this instance
   protected processedBatches: Set<string> = new Set();
-  private smt: any; // Will be initialized when needed
+  
+  // Track processed requests
+  private processedRequestIds: Set<string> = new Set();
+  
+  // Store the original request data (authenticator and transaction hash)
+  // along with the requestId to be able to reconstruct complete inclusion proofs
+  private requestDataMap: Map<string, { authenticator: any, transactionHash: string }> = new Map();
+  
+  // Single persistent SMT instance for the entire lifecycle
+  private smt: any = null; // Will be initialized when needed
 
   constructor(config: AggregatorConfig) {
     super(config);
@@ -467,6 +478,41 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
    * @param batchNumber The batch number to process
    * @returns Result of the hashroot submission
    */
+  /**
+   * Helper method to convert a requestId to bytes format for SMT
+   * @param requestId The request ID in any format
+   * @returns Uint8Array representation of the requestId
+   */
+  private convertRequestIdToBytes(requestId: any): Uint8Array {
+    // If it's already a Uint8Array, use it directly
+    if (requestId instanceof Uint8Array) {
+      return requestId;
+    } else if (Buffer.isBuffer(requestId)) {
+      return new Uint8Array(requestId);
+    } else if (typeof requestId === 'string') {
+      // Convert string to bytes
+      if (requestId.startsWith('0x')) {
+        return hexToBytes(requestId);
+      } else {
+        // Assume it's a hex string without prefix
+        return hexToBytes('0x' + requestId);
+      }
+    } else if (typeof requestId === 'bigint' || typeof requestId === 'number') {
+      // Convert numeric to hex string, then to bytes
+      const hexStr = requestId.toString(16).padStart(64, '0');
+      return hexToBytes('0x' + hexStr);
+    } else {
+      // Fallback - stringify and convert
+      return Buffer.from(String(requestId), 'utf8');
+    }
+  }
+
+  /**
+   * Process a batch by generating a hashroot and submitting it to the contract
+   * Uses a persistent SMT that accumulates all requests
+   * @param batchNumber The batch number to process
+   * @returns Transaction result
+   */
   public async processBatch(batchNumber: bigint | string): Promise<TransactionResult> {
     try {
       const bn = typeof batchNumber === 'string' ? BigInt(batchNumber) : batchNumber;
@@ -501,30 +547,84 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
       // We already got the batch info above, but let's make sure we have the correct variables
       const { requests } = batchInfo;
 
-      // Create leaf nodes for the Merkle Tree
-      const leaves: [string, string][] = [];
-
-      // Add all commitments as leaves
-      for (const request of requests) {
-        // Create a leaf value that combines payload and authenticator
-        const key = request.requestID;
-        const value = bytesToHex(
-          ethers.concat([hexToBytes(request.payload), hexToBytes(request.authenticator)]),
-        );
-
-        // Add to leaves array
-        leaves.push([key, value]);
+      // Create the SMT if it doesn't exist yet
+      if (!this.smt) {
+        console.log(`Creating new SMT instance for the first time`);
+        this.smt = await SparseMerkleTree.create(HashAlgorithm.SHA256);
+        console.log(`SMT created successfully`);
       }
-
-      // Create the Merkle Tree
-      this.smt = StandardMerkleTree.of(leaves, ['string', 'string']);
-
-      // Get the SMT root
-      const root = this.smt.root;
-      const rootBytes = hexToBytes(root);
+      
+      // Add each request to the SMT
+      let addedCount = 0;
+      let skippedCount = 0;
+      
+      for (const request of requests) {
+        // Convert to Uint8Array format for SMT
+        const requestIdBytes = this.convertRequestIdToBytes(request.requestID);
+        const requestIdHex = Buffer.from(requestIdBytes).toString('hex');
+        
+        // Skip already processed requests
+        if (this.processedRequestIds.has(requestIdHex)) {
+          console.log(`Skipping already processed request ${requestIdHex.substring(0, 20)}...`);
+          skippedCount++;
+          continue;
+        }
+        
+        // 1. Parse authenticator as JSON
+        let authenticatorObj;
+        try {
+          const authText = Buffer.from(hexToBytes(request.authenticator)).toString();
+          authenticatorObj = JSON.parse(authText);
+        } catch (e: any) {
+          // If not valid JSON, handle gracefully
+          console.warn(`Failed to parse authenticator as JSON for request ${requestIdHex.substring(0, 20)}...: ${e.message}`);
+          // Use raw authenticator if not valid JSON
+          authenticatorObj = request.authenticator; 
+        }
+        
+        // 2. Get transaction hash from payload
+        const transactionHash = request.payload;
+        
+        // 3. Combine into the structure expected by InclusionProof verification
+        const jsonData = {
+          authenticator: authenticatorObj,
+          transactionHash: transactionHash
+        };
+        
+        // 4. Convert to JSON and hash it
+        const jsonString = JSON.stringify(jsonData);
+        const leafValue = await new DataHasher(HashAlgorithm.SHA256)
+          .update(new TextEncoder().encode(jsonString))
+          .digest();
+        
+        console.log(`Calculated leaf value for request ${requestIdHex.substring(0, 20)}...`);
+        
+        // 5. Add the leaf to the SMT using the raw bytes as the key
+        await this.smt.addLeaf(requestIdBytes, leafValue.data);
+        
+        // Mark as processed using hex representation for tracking
+        this.processedRequestIds.add(requestIdHex);
+        
+        // Store the original request data for inclusion proof generation
+        this.requestDataMap.set(requestIdHex, {
+          authenticator: authenticatorObj,
+          transactionHash: `0000${transactionHash}` // Adding "0000" prefix for SHA-256 hash algorithm
+        });
+        
+        addedCount++;
+        
+        console.log(`Added leaf for request ${requestIdHex.substring(0, 20)}...`);
+      }
+      
+      console.log(`Processed ${requests.length} requests: ${addedCount} added, ${skippedCount} skipped`);
+      console.log(`Total unique requests in SMT: ${this.processedRequestIds.size}`);
+      
+      // Get the root hash
+      const rootHashData = this.smt.rootHash.data;
+      console.log(`Generated hashroot with ${rootHashData.length} bytes`);
 
       // Submit the hashroot
-      const result = await this.submitHashroot(bn, rootBytes);
+      const result = await this.submitHashroot(bn, rootHashData);
       
       // If successful, add to processed batches to avoid duplicate processing
       if (result.success) {
@@ -723,6 +823,54 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
       return null;
     } catch (error) {
       console.error('Error getting next batch to process:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Get an inclusion proof for a specific request ID from the SMT
+   * The SMT will return an appropriate proof whether the leaf exists or not
+   * 
+   * @param requestId The request ID to generate a proof for (can be bytes, hex string, or Buffer)
+   * @returns The inclusion proof or null if SMT isn't initialized
+   */
+  public async getInclusionProof(requestId: Uint8Array | string | Buffer): Promise<any> {
+    // Convert the requestId to the appropriate format for SMT
+    const requestIdBytes = this.convertRequestIdToBytes(requestId);
+    const requestIdHex = Buffer.from(requestIdBytes).toString('hex');
+    
+    console.log(`Getting inclusion proof for requestId ${requestIdHex.substring(0, 20)}...`);
+    
+    // Check if we have an SMT initialized
+    if (!this.smt) {
+      console.error(`No SMT initialized yet, cannot generate proof`);
+      return null;
+    }
+    
+    try {
+      // Generate the proof using the SMT's getPath method with the bytes
+      // This will return a proper Merkle path whether the leaf exists or not
+      console.log(`Generating proof for requestId with ${requestIdBytes.length} bytes`);
+      const proof = this.smt.getPath(requestIdBytes);
+      
+      // Determine if this is a positive or negative inclusion proof
+      const isPositiveProof = this.processedRequestIds.has(requestIdHex);
+      console.log(`Generated ${isPositiveProof ? 'positive' : 'negative'} inclusion proof with ${proof.steps.length} steps`);
+      
+      // Get the original request data (if available)
+      const originalData = this.requestDataMap.get(requestIdHex);
+      
+      if (originalData) {
+        console.log(`Found original data for requestId ${requestIdHex.substring(0, 20)}`);
+        // Attach the original data to the proof object
+        proof.leafData = originalData;
+      } else {
+        console.log(`No original data found for requestId ${requestIdHex.substring(0, 20)}`);
+      }
+      
+      return proof;
+    } catch (error) {
+      console.error(`Error generating inclusion proof for requestId:`, error);
       return null;
     }
   }
