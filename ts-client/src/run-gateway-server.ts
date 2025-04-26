@@ -214,156 +214,59 @@ function createHttpServer(client: AggregatorGatewayClient): http.Server {
               return;
             }
             
-            // Find batch containing this request
+            // Get the requestId from the parameters
             const requestId = params.requestId;
-            console.log(`Looking for inclusion proof for requestId: ${requestId}`);
+            console.log(`Generating inclusion proof for requestId: ${requestId}`);
             
-            // Normalize requestId format (remove 0x prefix if present for consistency)
-            const normalizedRequestId = requestId.startsWith('0x') ? requestId.slice(2) : requestId;
-            
-            // Get all processed batches and check if the request is in any of them
-            const batchCount = await client.getLatestBatchNumber();
-            const latestProcessedBatch = await nodeClient.getLatestProcessedBatchNumber();
-            console.log(`Latest batch: ${batchCount}, Latest processed batch: ${latestProcessedBatch}`);
-            
-            let foundBatch = null;
-            let foundRequest = null;
-            
-            // Only search processed batches for inclusion proofs
-            for (let i = 1n; i <= latestProcessedBatch; i++) {
-              console.log(`Checking batch ${i} for request...`);
-              const currentBatch = await client.getBatch(i);
-              
-              if (!currentBatch || !currentBatch.requests || currentBatch.requests.length === 0) {
-                console.log(`Batch ${i} has no requests or is invalid`);
-                continue;
-              }
-              
-              console.log(`Batch ${i} has ${currentBatch.requests.length} requests and is ${currentBatch.processed ? 'processed' : 'unprocessed'}`);
-              
-              // Find the request in the batch by normalizing and comparing IDs
-              for (const req of currentBatch.requests) {
-                if (!req.requestID) continue;
-                
-                // Convert requestID to string format for comparison
-                let batchReqId = '';
-                if (typeof req.requestID === 'string') {
-                  batchReqId = req.requestID.startsWith('0x') ? req.requestID.slice(2) : req.requestID;
-                } else if (req.requestID instanceof Uint8Array) {
-                  batchReqId = Buffer.from(req.requestID).toString('hex');
-                } else if (typeof req.requestID === 'bigint') {
-                  batchReqId = req.requestID.toString(16); // Convert BigInt to hex string
+            // Convert requestId to bytes format suitable for SMT lookup
+            let requestIdBytes: Uint8Array;
+            try {
+              if (typeof requestId === 'string') {
+                // If it has 0x prefix, assume it's a hex string and convert
+                if (requestId.startsWith('0x')) {
+                  requestIdBytes = Buffer.from(requestId.slice(2), 'hex');
                 } else {
-                  // Fallback to string conversion
-                  batchReqId = String(req.requestID).replace(/^0x/, '');
+                  // Assume it's a hex string without prefix
+                  requestIdBytes = Buffer.from(requestId, 'hex');
                 }
-                
-                console.log(`Comparing: ${normalizedRequestId.substring(0, 20)}... with ${batchReqId.substring(0, 20)}...`);
-                
-                // Case-insensitive comparison for hex strings
-                if (normalizedRequestId.toLowerCase() === batchReqId.toLowerCase()) {
-                  console.log(`Found matching request in batch ${i}!`);
-                  foundBatch = {
-                    ...currentBatch,
-                    batchNumber: i
-                  };
-                  foundRequest = req;
-                  break;
-                }
+              } else if (requestId instanceof Uint8Array || requestId instanceof Buffer) {
+                requestIdBytes = requestId;
+              } else {
+                throw new Error(`Unsupported requestId type: ${typeof requestId}`);
               }
               
-              if (foundBatch) break; // Stop searching if we found it
-            }
-            
-            if (!foundBatch || !foundRequest) {
-              console.log(`Request ID ${requestId} not found in any processed batch`);
-              // Return a 404-like JSON-RPC response
-              res.writeHead(404, { 'Content-Type': 'application/json' });
-              res.end(safeStringify({
-                jsonrpc: '2.0',
-                id,
-                error: { code: -32001, message: 'Not found: Proof not available yet' }
-              }));
+              const requestIdHex = Buffer.from(requestIdBytes).toString('hex');
+              console.log(`Request ID as hex: ${requestIdHex.substring(0, 20)}...`);
+            } catch (e) {
+              console.error(`Error converting requestId to bytes: ${e.message}`);
+              sendResponse(null, { 
+                code: -32602, 
+                message: 'Invalid requestId format - cannot convert to bytes' 
+              });
               return;
             }
             
-            console.log(`Creating inclusion proof for request ID ${requestId} in batch ${foundBatch.batchNumber}`);
+            // Get the inclusion proof directly from the SMT
+            const proof = await nodeClient.getInclusionProof(requestIdBytes);
             
-            // Create a proper inclusion proof
-            // In a real implementation, we would get this from the SMT that processed the batch
-            // For demonstration purposes, we'll create a simplified valid proof
-            
-            // Get authenticator and payload from the found request
-            const authenticator = foundRequest.authenticator;
-            const payload = foundRequest.payload;
-            
-            // Format the authenticator for the response
-            let authObject = {};
-            try {
-              // Try to parse the authenticator if it's a JSON string
-              if (typeof authenticator === 'string') {
-                try {
-                  authObject = JSON.parse(authenticator);
-                } catch (e) {
-                  // Not JSON, use as-is
-                  authObject = {
-                    data: authenticator
-                  };
-                }
-              } else if (authenticator instanceof Uint8Array) {
-                // For binary data, convert to hex
-                authObject = {
-                  data: Buffer.from(authenticator).toString('hex')
-                };
-              } else {
-                // Use as-is
-                authObject = authenticator;
-              }
-            } catch (e) {
-              console.error(`Error parsing authenticator: ${e.message}`);
-              authObject = { error: "Could not parse authenticator" };
+            if (!proof) {
+              console.log(`Failed to generate proof for requestId ${requestId}`);
+              sendResponse(null, { 
+                code: -32001, 
+                message: 'Failed to generate inclusion proof' 
+              });
+              return;
             }
             
-            // Create simplified merkle tree path
-            // In reality, this would be generated from the SMT
-            const merkleTreePath = {
-              root: foundBatch.hashroot,
-              steps: [
-                { 
-                  side: "right", 
-                  value: "0x" + crypto.randomBytes(32).toString('hex') 
-                },
-                { 
-                  side: "left", 
-                  value: "0x" + crypto.randomBytes(32).toString('hex') 
-                }
-              ]
-            };
+            // Convert the proof to the expected response format
+            const merkleTreePathDto = proof.toDto();
             
-            // Format the transaction hash from the payload if available
-            let txHash = "";
-            if (typeof payload === 'string') {
-              txHash = payload.startsWith('0x') ? payload : '0x' + payload;
-            } else if (payload instanceof Uint8Array) {
-              txHash = '0x' + Buffer.from(payload).toString('hex');
-            } else {
-              // Generate a placeholder
-              txHash = '0x' + crypto.randomBytes(32).toString('hex');
-            }
-            
-            // Format the proof response with all the data
-            const proofResponse = {
-              requestId: requestId,
-              batchNumber: foundBatch.batchNumber.toString(),
-              processed: foundBatch.processed,
-              hashroot: foundBatch.hashroot,
-              merkleTreePath: merkleTreePath,
-              authenticator: authObject,
-              transactionHash: txHash
-            };
-            
-            console.log(`Successfully generated inclusion proof for request ID ${requestId}`);
-            sendResponse(proofResponse);
+            // Since we don't have the actual authenticator and transaction hash data,
+            // we return an error as specified
+            sendResponse(null, { 
+              code: -32001, 
+              message: 'Inclusion proof without original data is not supported' 
+            });
           } catch (error: any) {
             console.error(`Error getting inclusion proof: ${error.message}`);
             console.error(error.stack);

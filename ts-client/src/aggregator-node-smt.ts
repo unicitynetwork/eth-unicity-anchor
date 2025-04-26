@@ -48,6 +48,10 @@ export class SMTAggregatorNodeClient extends AggregatorNodeClient {
 
   // Track processed requests
   private processedRequestIds: Set<string> = new Set();
+  
+  // TODO: Store the original request data (authenticator and transaction hash)
+  // along with the requestId to be able to reconstruct complete inclusion proofs
+  // private requestDataMap: Map<string, { authenticator: any, transactionHash: string }> = new Map();
 
   /**
    * Generates a hashroot for a batch using Sparse Merkle Tree
