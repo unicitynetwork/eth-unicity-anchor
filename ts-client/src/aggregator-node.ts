@@ -423,9 +423,10 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
     
     // Add all commitments as leaves
     for (const request of requests) {
-      // Convert to Uint8Array format for SMT
-      const requestIdBytes = this.convertRequestIdToBytes(request.requestID);
-      const requestIdHex = Buffer.from(requestIdBytes).toString('hex');
+      // Convert requestId to BigInt for SMT using our helper method
+      const { bigint: requestIdBigInt, hex: requestIdHex } = this.convertRequestIdToBigInt(request.requestID);
+      
+      console.log(`[Hashroot] RequestID as BigInt: ${requestIdBigInt}`);
       
       // 1. Parse authenticator as JSON
       let authenticatorObj;
@@ -457,8 +458,8 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
       // Log leaf data for debugging
       console.log(`[Hashroot] Adding leaf for requestId ${requestIdHex.substring(0, 20)}...`);
       
-      // 5. Add the leaf to the SMT
-      await this.smt.addLeaf(requestIdBytes, leafValue.data);
+      // 5. Add the leaf to the SMT using BigInt path
+      await this.smt.addLeaf(requestIdBigInt, leafValue.data);
       
       // Store the data for inclusion proofs
       this.processedRequestIds.add(requestIdHex);
@@ -513,32 +514,57 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
    * @returns Result of the hashroot submission
    */
   /**
-   * Helper method to convert a requestId to bytes format for SMT
+   * Helper method to convert a requestId to BigInt format for SMT
+   * Also returns the hex representation for tracking
    * @param requestId The request ID in any format
-   * @returns Uint8Array representation of the requestId
+   * @returns Object with BigInt and hex string representation of the requestId
    */
-  private convertRequestIdToBytes(requestId: any): Uint8Array {
-    // If it's already a Uint8Array, use it directly
-    if (requestId instanceof Uint8Array) {
-      return requestId;
-    } else if (Buffer.isBuffer(requestId)) {
-      return new Uint8Array(requestId);
-    } else if (typeof requestId === 'string') {
-      // Convert string to bytes
-      if (requestId.startsWith('0x')) {
-        return hexToBytes(requestId);
-      } else {
-        // Assume it's a hex string without prefix
-        return hexToBytes('0x' + requestId);
+  private convertRequestIdToBigInt(requestId: any): { bigint: bigint, hex: string } {
+    let requestIdBigInt: bigint;
+    let requestIdHex: string;
+    
+    if (typeof requestId === 'string') {
+      requestIdHex = requestId.replace(/^0x/, '');
+      // Convert hex string to BigInt
+      try {
+        requestIdBigInt = BigInt('0x' + requestIdHex);
+      } catch (e) {
+        // If not valid hex, use hash fallback
+        console.warn(`Cannot convert string to BigInt directly: ${requestIdHex}. Using hash fallback.`);
+        const hashVal = [...requestIdHex].reduce((acc, char) => {
+          return ((acc << 5) - acc + char.charCodeAt(0)) | 0;
+        }, 0);
+        requestIdBigInt = BigInt(Math.abs(hashVal));
       }
-    } else if (typeof requestId === 'bigint' || typeof requestId === 'number') {
-      // Convert numeric to hex string, then to bytes
-      const hexStr = requestId.toString(16).padStart(64, '0');
-      return hexToBytes('0x' + hexStr);
+    } else if (typeof requestId === 'bigint') {
+      requestIdBigInt = requestId;
+      requestIdHex = requestId.toString(16);
+    } else if (typeof requestId === 'number') {
+      requestIdBigInt = BigInt(requestId);
+      requestIdHex = requestId.toString(16);
+    } else if (requestId instanceof Uint8Array || Buffer.isBuffer(requestId)) {
+      // Convert bytes to hex string, then to BigInt
+      requestIdHex = Buffer.from(requestId).toString('hex');
+      requestIdBigInt = BigInt('0x' + requestIdHex);
     } else {
-      // Fallback - stringify and convert
-      return Buffer.from(String(requestId), 'utf8');
+      // Try to convert other formats to string first
+      const requestIdStr = String(requestId).replace(/^0x/, '');
+      requestIdHex = requestIdStr;
+      try {
+        // Try to interpret as hex
+        requestIdBigInt = BigInt('0x' + requestIdStr);
+      } catch (e) {
+        // Use a hash of the string as fallback
+        console.warn(`Cannot convert to BigInt: ${requestIdStr}. Using hash fallback.`);
+        // Simple hash function
+        const hashVal = [...requestIdStr].reduce((acc, char) => {
+          return ((acc << 5) - acc + char.charCodeAt(0)) | 0;
+        }, 0);
+        requestIdBigInt = BigInt(Math.abs(hashVal));
+      }
     }
+    
+    return { bigint: requestIdBigInt, hex: requestIdHex };
   }
 
   /**
@@ -593,9 +619,10 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
       let skippedCount = 0;
       
       for (const request of requests) {
-        // Convert to Uint8Array format for SMT
-        const requestIdBytes = this.convertRequestIdToBytes(request.requestID);
-        const requestIdHex = Buffer.from(requestIdBytes).toString('hex');
+        // Convert requestId to BigInt for SMT using our helper method
+        const { bigint: requestIdBigInt, hex: requestIdHex } = this.convertRequestIdToBigInt(request.requestID);
+        
+        console.log(`RequestID as BigInt: ${requestIdBigInt}`);
         
         // Skip already processed requests
         if (this.processedRequestIds.has(requestIdHex)) {
@@ -633,8 +660,8 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
         
         console.log(`Calculated leaf value for request ${requestIdHex.substring(0, 20)}...`);
         
-        // 5. Add the leaf to the SMT using the raw bytes as the key
-        await this.smt.addLeaf(requestIdBytes, leafValue.data);
+        // 5. Add the leaf to the SMT using BigInt as the key (UniCity SMT expects BigInt)
+        await this.smt.addLeaf(requestIdBigInt, leafValue.data);
         
         // Mark as processed using hex representation for tracking
         this.processedRequestIds.add(requestIdHex);
@@ -868,12 +895,12 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
    * @param requestId The request ID to generate a proof for (can be bytes, hex string, or Buffer)
    * @returns The inclusion proof or null if SMT isn't initialized
    */
-  public async getInclusionProof(requestId: Uint8Array | string | Buffer): Promise<any> {
-    // Convert the requestId to the appropriate format for SMT
-    const requestIdBytes = this.convertRequestIdToBytes(requestId);
-    const requestIdHex = Buffer.from(requestIdBytes).toString('hex');
+  public async getInclusionProof(requestId: Uint8Array | string | Buffer | bigint): Promise<any> {
+    // Convert the requestId to BigInt for SMT using our helper method
+    const { bigint: requestIdBigInt, hex: requestIdHex } = this.convertRequestIdToBigInt(requestId);
     
     console.log(`Getting inclusion proof for requestId ${requestIdHex.substring(0, 20)}...`);
+    console.log(`RequestID as BigInt: ${requestIdBigInt}`);
     
     // Check if we have an SMT initialized
     if (!this.smt) {
@@ -882,10 +909,9 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
     }
     
     try {
-      // Generate the proof using the SMT's getPath method with the bytes
+      // Generate the proof using the SMT's getPath method with BigInt
       // This will return a proper Merkle path whether the leaf exists or not
-      console.log(`Generating proof for requestId with ${requestIdBytes.length} bytes`);
-      const proof = this.smt.getPath(requestIdBytes);
+      const proof = this.smt.getPath(requestIdBigInt);
       
       // Determine if this is a positive or negative inclusion proof
       const isPositiveProof = this.processedRequestIds.has(requestIdHex);
