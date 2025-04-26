@@ -945,7 +945,7 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
 
       // For backward compatibility, format the proof in the expected format
       return {
-        proof: inclusionProof.steps.map(step => step.toString()),
+        proof: inclusionProof.steps.map((step: any) => step.toString()),
         value: request.payload + request.authenticator,
       };
     } catch (error) {
