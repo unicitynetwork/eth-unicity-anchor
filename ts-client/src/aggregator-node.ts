@@ -423,10 +423,10 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
     
     // Add all commitments as leaves
     for (const request of requests) {
-      // Convert requestId to BigInt for SMT using our helper method
-      const { bigint: requestIdBigInt, hex: requestIdHex } = this.convertRequestIdToBigInt(request.requestID);
+      // Convert requestId to SMT path using our helper method (with 1 prefix)
+      const { path: requestIdPath, hex: requestIdHex } = this.convertRequestIdToSMTPath(request.requestID);
       
-      console.log(`[Hashroot] RequestID as BigInt: ${requestIdBigInt}`);
+      console.log(`[Hashroot] RequestID as SMT path: ${requestIdPath}`);
       
       // 1. Parse authenticator as JSON
       let authenticatorObj;
@@ -458,8 +458,8 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
       // Log leaf data for debugging
       console.log(`[Hashroot] Adding leaf for requestId ${requestIdHex.substring(0, 20)}...`);
       
-      // 5. Add the leaf to the SMT using BigInt path
-      await this.smt.addLeaf(requestIdBigInt, leafValue.data);
+      // 5. Add the leaf to the SMT using SMT path with 1 prefix
+      await this.smt.addLeaf(requestIdPath, leafValue.data);
       
       // Store the data for inclusion proofs
       this.processedRequestIds.add(requestIdHex);
@@ -566,6 +566,44 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
     
     return { bigint: requestIdBigInt, hex: requestIdHex };
   }
+  
+  /**
+   * Helper method to convert a requestId to SMT path format
+   * SMT paths require a '1' prefix to properly preserve leading zeros
+   * 
+   * @param requestId The request ID in any format
+   * @returns Object with SMT-formatted BigInt path and hex string representation
+   */
+  private convertRequestIdToSMTPath(requestId: any): { path: bigint, hex: string } {
+    let requestIdWithPrefix: any;
+    
+    // First add the '1' prefix to preserve leading zeros
+    if (typeof requestId === 'string') {
+      // Remove 0x if present, then add 1 prefix
+      const hexString = requestId.replace(/^0x/, '');
+      requestIdWithPrefix = '1' + hexString;
+    } else if (requestId instanceof Uint8Array || Buffer.isBuffer(requestId)) {
+      // Convert to hex, then add 1 prefix
+      const hexString = Buffer.from(requestId).toString('hex');
+      requestIdWithPrefix = '1' + hexString;
+    } else if (typeof requestId === 'bigint' || typeof requestId === 'number') {
+      // Convert to hex string, add 1 prefix
+      const hexString = (typeof requestId === 'bigint' ? 
+        requestId.toString(16) : BigInt(requestId).toString(16));
+      requestIdWithPrefix = '1' + hexString;
+    } else {
+      // For any other type, stringify first
+      const hexString = String(requestId).replace(/^0x/, '');
+      requestIdWithPrefix = '1' + hexString;
+    }
+    
+    // Now convert with the 1 prefix already attached
+    const result = this.convertRequestIdToBigInt('0x' + requestIdWithPrefix);
+    
+    console.log(`Converted to SMT path with 1-prefix: 0x${requestIdWithPrefix.substring(0, 21)}...`);
+    
+    return { path: result.bigint, hex: result.hex.substring(1) }; // Remove the 1 from hex for tracking
+  }
 
   /**
    * Process a batch by generating a hashroot and submitting it to the contract
@@ -619,10 +657,10 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
       let skippedCount = 0;
       
       for (const request of requests) {
-        // Convert requestId to BigInt for SMT using our helper method
-        const { bigint: requestIdBigInt, hex: requestIdHex } = this.convertRequestIdToBigInt(request.requestID);
+        // Convert requestId to SMT path using our helper method (with 1 prefix)
+        const { path: requestIdPath, hex: requestIdHex } = this.convertRequestIdToSMTPath(request.requestID);
         
-        console.log(`RequestID as BigInt: ${requestIdBigInt}`);
+        console.log(`RequestID as SMT path: ${requestIdPath}`);
         
         // Skip already processed requests
         if (this.processedRequestIds.has(requestIdHex)) {
@@ -661,7 +699,7 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
         console.log(`Calculated leaf value for request ${requestIdHex.substring(0, 20)}...`);
         
         // 5. Add the leaf to the SMT using BigInt as the key (UniCity SMT expects BigInt)
-        await this.smt.addLeaf(requestIdBigInt, leafValue.data);
+        await this.smt.addLeaf(requestIdPath, leafValue.data);
         
         // Mark as processed using hex representation for tracking
         this.processedRequestIds.add(requestIdHex);
@@ -896,11 +934,11 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
    * @returns The inclusion proof or null if SMT isn't initialized
    */
   public async getInclusionProof(requestId: Uint8Array | string | Buffer | bigint): Promise<any> {
-    // Convert the requestId to BigInt for SMT using our helper method
-    const { bigint: requestIdBigInt, hex: requestIdHex } = this.convertRequestIdToBigInt(requestId);
+    // Convert the requestId to SMT path using our helper method (with 1 prefix)
+    const { path: requestIdPath, hex: requestIdHex } = this.convertRequestIdToSMTPath(requestId);
     
     console.log(`Getting inclusion proof for requestId ${requestIdHex.substring(0, 20)}...`);
-    console.log(`RequestID as BigInt: ${requestIdBigInt}`);
+    console.log(`RequestID as SMT path: ${requestIdPath}`);
     
     // Check if we have an SMT initialized
     if (!this.smt) {
@@ -909,9 +947,9 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
     }
     
     try {
-      // Generate the proof using the SMT's getPath method with BigInt
+      // Generate the proof using the SMT's getPath method with SMT path (with 1 prefix)
       // This will return a proper Merkle path whether the leaf exists or not
-      const proof = this.smt.getPath(requestIdBigInt);
+      const proof = this.smt.getPath(requestIdPath);
       
       // Determine if this is a positive or negative inclusion proof
       const isPositiveProof = this.processedRequestIds.has(requestIdHex);
