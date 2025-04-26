@@ -49,9 +49,9 @@ export class SMTAggregatorNodeClient extends AggregatorNodeClient {
   // Track processed requests
   private processedRequestIds: Set<string> = new Set();
   
-  // TODO: Store the original request data (authenticator and transaction hash)
+  // Store the original request data (authenticator and transaction hash)
   // along with the requestId to be able to reconstruct complete inclusion proofs
-  // private requestDataMap: Map<string, { authenticator: any, transactionHash: string }> = new Map();
+  private requestDataMap: Map<string, { authenticator: any, transactionHash: string }> = new Map();
 
   /**
    * Generates a hashroot for a batch using Sparse Merkle Tree
@@ -128,6 +128,12 @@ export class SMTAggregatorNodeClient extends AggregatorNodeClient {
         
         // Mark as processed using hex representation for tracking
         this.processedRequestIds.add(requestIdHex);
+        
+        // Store the original request data for inclusion proof generation
+        this.requestDataMap.set(requestIdHex, {
+          authenticator: authenticatorObj,
+          transactionHash: `0000${transactionHash}` // Adding "0000" prefix for SHA-256 hash algorithm
+        });
         addedCount++;
         
         console.log(`[SMT] Added leaf for request ${requestIdHex.substring(0, 20)}...`);
@@ -197,6 +203,17 @@ export class SMTAggregatorNodeClient extends AggregatorNodeClient {
       // Determine if this is a positive or negative inclusion proof
       const isPositiveProof = this.processedRequestIds.has(requestIdHex);
       console.log(`[SMT] Generated ${isPositiveProof ? 'positive' : 'negative'} inclusion proof with ${proof.steps.length} steps`);
+      
+      // Get the original request data (if available)
+      const originalData = this.requestDataMap.get(requestIdHex);
+      
+      if (originalData) {
+        console.log(`[SMT] Found original data for requestId ${requestIdHex.substring(0, 20)}`);
+        // Attach the original data to the proof object
+        proof.leafData = originalData;
+      } else {
+        console.log(`[SMT] No original data found for requestId ${requestIdHex.substring(0, 20)}`);
+      }
       
       return proof;
     } catch (error) {

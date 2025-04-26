@@ -261,12 +261,25 @@ function createHttpServer(client: AggregatorGatewayClient): http.Server {
             // Convert the proof to the expected response format
             const merkleTreePathDto = proof.toDto();
             
-            // Since we don't have the actual authenticator and transaction hash data,
-            // we return an error as specified
-            sendResponse(null, { 
-              code: -32001, 
-              message: 'Inclusion proof without original data is not supported' 
-            });
+            // Check if we have the original data (authenticator and transactionHash)
+            if (!proof.leafData) {
+              console.log(`No original data found for requestId ${requestId}`);
+              sendResponse(null, { 
+                code: -32001, 
+                message: 'Inclusion proof without original data is not supported' 
+              });
+              return;
+            }
+            
+            // Construct the complete response with merkle path and original data
+            const response = {
+              authenticator: proof.leafData.authenticator,
+              transactionHash: proof.leafData.transactionHash,
+              merkleTreePath: merkleTreePathDto
+            };
+            
+            console.log(`Returning complete inclusion proof for requestId ${requestId}`);
+            sendResponse(response);
           } catch (error: any) {
             console.error(`Error getting inclusion proof: ${error.message}`);
             console.error(error.stack);
