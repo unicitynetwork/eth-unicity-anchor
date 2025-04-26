@@ -237,7 +237,7 @@ function createHttpServer(client: AggregatorGatewayClient): http.Server {
               
               const requestIdHex = Buffer.from(requestIdBytes).toString('hex');
               console.log(`Request ID as hex: ${requestIdHex.substring(0, 20)}...`);
-            } catch (e) {
+            } catch (e: any) {
               console.error(`Error converting requestId to bytes: ${e.message}`);
               sendResponse(null, { 
                 code: -32602, 
