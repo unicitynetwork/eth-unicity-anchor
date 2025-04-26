@@ -575,34 +575,31 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
    * @returns Object with SMT-formatted BigInt path and hex string representation
    */
   private convertRequestIdToSMTPath(requestId: any): { path: bigint, hex: string } {
-    let requestIdWithPrefix: any;
+    // First normalize to hex string without 0x prefix
+    let hexString: string;
     
-    // First add the '1' prefix to preserve leading zeros
     if (typeof requestId === 'string') {
-      // Remove 0x if present, then add 1 prefix
-      const hexString = requestId.replace(/^0x/, '');
-      requestIdWithPrefix = '1' + hexString;
+      // Remove 0x if present
+      hexString = requestId.replace(/^0x/, '');
     } else if (requestId instanceof Uint8Array || Buffer.isBuffer(requestId)) {
-      // Convert to hex, then add 1 prefix
-      const hexString = Buffer.from(requestId).toString('hex');
-      requestIdWithPrefix = '1' + hexString;
+      // Convert bytes to hex string
+      hexString = Buffer.from(requestId).toString('hex');
     } else if (typeof requestId === 'bigint' || typeof requestId === 'number') {
-      // Convert to hex string, add 1 prefix
-      const hexString = (typeof requestId === 'bigint' ? 
+      // Convert numeric to hex string
+      hexString = (typeof requestId === 'bigint' ? 
         requestId.toString(16) : BigInt(requestId).toString(16));
-      requestIdWithPrefix = '1' + hexString;
     } else {
       // For any other type, stringify first
-      const hexString = String(requestId).replace(/^0x/, '');
-      requestIdWithPrefix = '1' + hexString;
+      hexString = String(requestId).replace(/^0x/, '');
     }
     
-    // Now convert with the 1 prefix already attached
-    const result = this.convertRequestIdToBigInt('0x' + requestIdWithPrefix);
+    // Create SMT path by adding '1' prefix to preserve leading zeros
+    const smtPath = BigInt('0x1' + hexString);
     
-    console.log(`Converted to SMT path with 1-prefix: 0x${requestIdWithPrefix.substring(0, 21)}...`);
+    console.log(`Normalized request ID to hex: ${hexString.substring(0, 20)}...`);
+    console.log(`SMT path with 1-prefix: 0x1${hexString.substring(0, 20)}...`);
     
-    return { path: result.bigint, hex: result.hex.substring(1) }; // Remove the 1 from hex for tracking
+    return { path: smtPath, hex: hexString };
   }
 
   /**

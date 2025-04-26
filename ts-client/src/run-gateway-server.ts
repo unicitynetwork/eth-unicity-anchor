@@ -271,11 +271,15 @@ function createHttpServer(client: AggregatorGatewayClient): http.Server {
               return;
             }
             
+            // Debug the structure of the proof
+            console.log('Proof structure:', JSON.stringify(proof, (_, v) => typeof v === "bigint" ? v.toString() : v, 2));
+            
             // Construct the complete response with merkle path and original data
+            // Format the merkleTreePath according to the expected structure
             const response = {
               authenticator: proof.leafData.authenticator,
               transactionHash: proof.leafData.transactionHash,
-              merkleTreePath: merkleTreePathDto
+              merkleTreePath: proof.toDto() // Use the built-in serialization
             };
             
             console.log(`Returning complete inclusion proof for requestId ${requestId}`);
