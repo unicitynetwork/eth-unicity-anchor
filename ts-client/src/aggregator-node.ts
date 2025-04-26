@@ -414,31 +414,65 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
   protected async calculateHashroot(requests: BatchRequest[]): Promise<Uint8Array> {
     console.log(`[Hashroot] Calculating hashroot for ${requests.length} requests`);
     
-    // Create leaf nodes for the Merkle Tree
-    const leaves: [string, string][] = [];
+    // Create the SMT if it doesn't exist yet
+    if (!this.smt) {
+      console.log(`[Hashroot] Creating new SMT instance for the first time`);
+      this.smt = await SparseMerkleTree.create(HashAlgorithm.SHA256);
+      console.log(`[Hashroot] SMT created successfully`);
+    }
     
     // Add all commitments as leaves
     for (const request of requests) {
-      const key = request.requestID;
-      const value = bytesToHex(
-        ethers.concat([hexToBytes(request.payload), hexToBytes(request.authenticator)]),
-      );
+      // Convert to Uint8Array format for SMT
+      const requestIdBytes = this.convertRequestIdToBytes(request.requestID);
+      const requestIdHex = Buffer.from(requestIdBytes).toString('hex');
+      
+      // 1. Parse authenticator as JSON
+      let authenticatorObj;
+      try {
+        const authText = Buffer.from(hexToBytes(request.authenticator)).toString();
+        authenticatorObj = JSON.parse(authText);
+      } catch (e: any) {
+        // If not valid JSON, handle gracefully
+        console.warn(`[Hashroot] Failed to parse authenticator as JSON: ${e.message}`);
+        // Use raw authenticator if not valid JSON
+        authenticatorObj = request.authenticator; 
+      }
+      
+      // 2. Get transaction hash from payload
+      const transactionHash = request.payload;
+      
+      // 3. Combine into the structure expected
+      const jsonData = {
+        authenticator: authenticatorObj,
+        transactionHash: transactionHash
+      };
+      
+      // 4. Convert to JSON and hash it
+      const jsonString = JSON.stringify(jsonData);
+      const leafValue = await new DataHasher(HashAlgorithm.SHA256)
+        .update(new TextEncoder().encode(jsonString))
+        .digest();
       
       // Log leaf data for debugging
-      console.log(`[Hashroot] Leaf ${key}: ${value.substring(0, 20)}...${value.substring(value.length - 20)}`);
+      console.log(`[Hashroot] Adding leaf for requestId ${requestIdHex.substring(0, 20)}...`);
       
-      leaves.push([key, value]);
+      // 5. Add the leaf to the SMT
+      await this.smt.addLeaf(requestIdBytes, leafValue.data);
+      
+      // Store the data for inclusion proofs
+      this.processedRequestIds.add(requestIdHex);
+      this.requestDataMap.set(requestIdHex, {
+        authenticator: authenticatorObj,
+        transactionHash: `0000${transactionHash}` // Adding "0000" prefix for SHA-256 hash algorithm
+      });
     }
     
-    // Create the Merkle Tree
-    this.smt = StandardMerkleTree.of(leaves, ['string', 'string']);
+    // Get the root hash
+    const rootHashData = this.smt.rootHash.data;
+    console.log(`[Hashroot] Generated hashroot with ${rootHashData.length} bytes`);
     
-    // Get the SMT root
-    const root = this.smt.root;
-    console.log(`[Hashroot] Calculated SMT root (string): ${root}`);
-    console.log(`[Hashroot] Hex bytes of root: ${ethers.hexlify(hexToBytes(root))}`);
-    
-    return hexToBytes(root);
+    return rootHashData;
   }
   
   /**
@@ -877,6 +911,7 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
 
   /**
    * Generate Merkle proof for a specific commitment in a processed batch
+   * This is a backward compatibility method that uses the new getInclusionProof internally
    * @param batchNumber The batch number
    * @param requestID The request ID to generate proof for
    * @returns The Merkle proof or null if not found
@@ -902,41 +937,16 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
         return null; // Request not found in this batch
       }
 
-      // Create leaf nodes for the Merkle Tree
-      const leaves: [string, string][] = [];
-
-      // Add all commitments as leaves
-      for (const req of requests) {
-        const key = req.requestID;
-        const value = bytesToHex(
-          ethers.concat([hexToBytes(req.payload), hexToBytes(req.authenticator)]),
-        );
-
-        leaves.push([key, value]);
+      // Use our new getInclusionProof method
+      const inclusionProof = await this.getInclusionProof(id);
+      if (!inclusionProof) {
+        return null;
       }
 
-      // Create the Merkle Tree
-      this.smt = StandardMerkleTree.of(leaves, ['string', 'string']);
-
-      // Find the leaf index
-      let leafIndex = -1;
-      for (const [i, v] of this.smt.entries()) {
-        if (v[0] === id) {
-          leafIndex = i;
-          break;
-        }
-      }
-
-      if (leafIndex === -1) {
-        return null; // Leaf not found in tree
-      }
-
-      // Generate proof
-      const proof = this.smt.getProof(leafIndex);
-
+      // For backward compatibility, format the proof in the expected format
       return {
-        proof: proof,
-        value: leaves.find((leaf) => leaf[0] === id)?.[1] || '',
+        proof: inclusionProof.steps.map(step => step.toString()),
+        value: request.payload + request.authenticator,
       };
     } catch (error) {
       console.error('Error generating Merkle proof:', error);
