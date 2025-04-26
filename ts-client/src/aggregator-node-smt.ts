@@ -2,7 +2,6 @@ import { ethers } from 'ethers';
 import { AggregatorNodeClient } from './aggregator-node';
 import { SparseMerkleTree } from '@unicitylabs/commons/lib/smt/SparseMerkleTree.js';
 import { HashAlgorithm } from '@unicitylabs/commons/lib/hash/HashAlgorithm.js';
-import { DataHasher } from '@unicitylabs/commons/lib/hash/DataHasher.js';
 import { 
   ClientOptions, 
   TransactionResult, 
@@ -45,7 +44,7 @@ export class SMTAggregatorNodeClient extends AggregatorNodeClient {
    * @returns The calculated hashroot
    */
   // Single persistent SMT instance for the entire lifecycle
-  protected smt: any = null;
+  private smt: any = null;
 
   // Track processed requests
   private processedRequestIds: Set<string> = new Set();
@@ -98,7 +97,7 @@ export class SMTAggregatorNodeClient extends AggregatorNodeClient {
         const authText = new TextDecoder().decode(request.authenticator);
         try {
           authenticatorObj = JSON.parse(authText);
-        } catch (e: any) {
+        } catch (e) {
           // If not valid JSON, fail without fallback
           throw new Error(`Failed to parse authenticator as JSON for request ${requestIdHex.substring(0, 20)}...: ${e.message}`);
         }
@@ -170,7 +169,7 @@ export class SMTAggregatorNodeClient extends AggregatorNodeClient {
     if (requestId instanceof Uint8Array) {
       requestIdBytes = requestId;
       requestIdHex = Buffer.from(requestId).toString('hex');
-    } else if (Buffer.isBuffer(requestId)) {
+    } else if (requestId instanceof Buffer) {
       requestIdBytes = new Uint8Array(requestId);
       requestIdHex = requestId.toString('hex');
     } else if (typeof requestId === 'string') {
@@ -413,30 +412,20 @@ export class SMTAggregatorNodeClient extends AggregatorNodeClient {
       const requests = batchInfo.requests.map((req, index) => {
         console.log(`[SMT-Process] Converting request ${index+1}/${batchInfo.requests.length}, ID: ${req.requestID}`);
         
-        // Handle requestID conversion safely - convert to bytes
-        let requestID: Uint8Array;
+        // Handle requestID conversion safely
+        let requestID: bigint;
         try {
-          // If it's already a Uint8Array, use it directly
-          if (req.requestID instanceof Uint8Array) {
-            requestID = req.requestID;
-          } else if (Buffer.isBuffer(req.requestID)) {
-            requestID = new Uint8Array(req.requestID);
-          } else if (typeof req.requestID === 'string') {
-            // Convert string to bytes
-            requestID = Buffer.from(req.requestID.replace(/^0x/, ''), 'hex');
-          } else if (typeof req.requestID === 'bigint' || typeof req.requestID === 'number') {
-            // Convert numeric to hex string, then to bytes
-            requestID = Buffer.from(req.requestID.toString(16).padStart(64, '0'), 'hex');
-          } else {
-            throw new Error(`Unsupported requestID type: ${typeof req.requestID}`);
-          }
-          console.log(`[SMT-Process] Successfully converted requestID to bytes format`);
-        } catch (e: any) {
+          requestID = BigInt(req.requestID);
+          console.log(`[SMT-Process] Successfully converted requestID ${req.requestID} to BigInt`);
+        } catch (e) {
           console.warn(`[SMT-Process] Invalid requestID format, using fallback: ${req.requestID}`, e);
           // Use a hash of the string as fallback
-          const hashStr = String(req.requestID).padStart(32, '0');
-          requestID = Buffer.from(hashStr, 'utf8');
-          console.log(`[SMT-Process] Generated fallback requestID bytes`);
+          const hashCode = String(req.requestID).split('').reduce((a, b) => {
+            a = ((a << 5) - a) + b.charCodeAt(0);
+            return a & a;
+          }, 0);
+          requestID = BigInt(Math.abs(hashCode));
+          console.log(`[SMT-Process] Generated fallback requestID: ${requestID}`);
         }
 
         // Handle payload conversion with detailed logging
