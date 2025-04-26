@@ -43,107 +43,161 @@ export class SMTAggregatorNodeClient extends AggregatorNodeClient {
    * @param requests The requests to include in the batch
    * @returns The calculated hashroot
    */
+  // Single persistent SMT instance for the entire lifecycle
+  private smt: any = null;
+
+  // Track processed requests
+  private processedRequestIds: Set<string> = new Set();
+
+  /**
+   * Generates a hashroot for a batch using Sparse Merkle Tree
+   * Adds all requests from the batch to the persistent SMT.
+   * 
+   * @param batchNumber The batch number
+   * @param requests The requests to include in the batch
+   * @returns The calculated hashroot
+   */
   public async generateHashroot(
     batchNumber: bigint,
-    requests: Array<{ requestID: bigint; payload: Uint8Array; authenticator: Uint8Array }>
+    requests: Array<{ requestID: Uint8Array; payload: Uint8Array; authenticator: Uint8Array }>
   ): Promise<Uint8Array> {
     console.log(`[SMT] Starting hashroot generation for batch ${batchNumber} with ${requests.length} requests`);
     
-    // Add detailed diagnostics
-    console.log(`[SMT] Request payload sizes: ${requests.map(r => r.payload?.length || 0).join(', ')}`);
-    
     try {
-      // Create a new SMT - with retry mechanism
-      let smt = null;
-      let createAttempts = 0;
-      
-      while (createAttempts < 3) {
-        try {
-          smt = await SparseMerkleTree.create(HashAlgorithm.SHA256);
-          break;
-        } catch (err) {
-          createAttempts++;
-          console.error(`[SMT] Error creating SMT (attempt ${createAttempts}):`, err);
-          await new Promise(r => setTimeout(r, 500)); // Short delay before retry
-          
-          if (createAttempts >= 3) {
-            throw new Error(`Failed to create SMT after 3 attempts: ${err}`);
-          }
-        }
+      // Create the SMT if it doesn't exist yet
+      if (!this.smt) {
+        console.log(`[SMT] Creating new SMT instance for the first time`);
+        this.smt = await SparseMerkleTree.create(HashAlgorithm.SHA256);
+        console.log(`[SMT] SMT created successfully`);
       }
       
-      // Safety check in case SMT creation failed
-      if (!smt) {
-        console.error(`[SMT] Failed to create SMT after ${createAttempts} attempts`);
-        return new Uint8Array([0xFA, 0x11, 0xED, 0xCF, 0xEA, 0x1E, 0x5A, 0x17]); // Fallback hash
-      }
-      
-      console.log(`[SMT] Tree created successfully for batch ${batchNumber}`);
-
-      // Add each request to the SMT with detailed logging
-      let successfulLeaves = 0;
-      let failedLeaves = 0;
+      // Add each request to the SMT
+      let addedCount = 0;
+      let skippedCount = 0;
       
       for (const request of requests) {
-        // Ensure valid payload data (defensive coding)
-        let payload = request.payload;
-        if (!payload || payload.length === 0) {
-          console.warn(`[SMT] Empty payload for request ${request.requestID}, using default value`);
-          payload = new TextEncoder().encode(`default-payload-${request.requestID}`);
+        // Convert request ID to hex string for tracking
+        const requestIdHex = Buffer.from(request.requestID).toString('hex');
+        
+        // Skip already processed requests
+        if (this.processedRequestIds.has(requestIdHex)) {
+          console.log(`[SMT] Skipping already processed request ${requestIdHex.substring(0, 20)}...`);
+          skippedCount++;
+          continue;
         }
         
-        // Add detailed diagnostic for this leaf
-        console.log(`[SMT] Adding leaf for request ${request.requestID}, payload size: ${payload.length}`);
+        // Create the leaf value according to InclusionProof verification logic
         
+        // 1. Parse authenticator as JSON - fail if not valid JSON
+        let authenticatorObj;
+        const authText = new TextDecoder().decode(request.authenticator);
         try {
-          // In a production system, we might want to hash payload + authenticator together
-          // But for this example we'll use the payload as the leaf value
-          await smt.addLeaf(request.requestID, payload);
-          successfulLeaves++;
-        } catch (error) {
-          console.error(`[SMT] Error adding leaf to SMT for request ${request.requestID}:`, error);
-          
-          // Try a different approach with retry
-          let retrySuccess = false;
-          for (let i = 0; i < 2; i++) {
-            try {
-              const fallbackPayload = new TextEncoder().encode(`fallback-payload-${request.requestID}-attempt-${i}`);
-              await smt.addLeaf(request.requestID, fallbackPayload);
-              retrySuccess = true;
-              successfulLeaves++;
-              console.log(`[SMT] Successfully added fallback leaf for request ${request.requestID} on retry ${i+1}`);
-              break;
-            } catch (retryError) {
-              console.error(`[SMT] Retry ${i+1} failed for request ${request.requestID}:`, retryError);
-              await new Promise(r => setTimeout(r, 200)); // Short delay before retry
-            }
-          }
-          
-          if (!retrySuccess) {
-            failedLeaves++;
-          }
+          authenticatorObj = JSON.parse(authText);
+        } catch (e) {
+          // If not valid JSON, fail without fallback
+          throw new Error(`Failed to parse authenticator as JSON for request ${requestIdHex.substring(0, 20)}...: ${e.message}`);
         }
+        
+        // 2. Get transaction hash from payload
+        const transactionHash = Buffer.from(request.payload).toString('hex');
+        
+        // 3. Combine into the structure expected by InclusionProof verification
+        const jsonData = {
+          authenticator: authenticatorObj,
+          transactionHash: transactionHash
+        };
+        
+        // 4. Convert to JSON and hash it - this matches the InclusionProof.verify() logic
+        const jsonString = JSON.stringify(jsonData);
+        const leafValue = await new DataHasher(HashAlgorithm.SHA256)
+          .update(new TextEncoder().encode(jsonString))
+          .digest();
+        
+        console.log(`[SMT] Calculated leaf value for request ${requestIdHex.substring(0, 20)}...`);
+        
+        // 5. Calculate path for SMT from requestID bytes
+        // This uses proper key derivation from bytes as specified in the SMT implementation
+        // Note: We DO NOT convert to BigInt, but use the bytes directly as the key
+        
+        // Add the leaf to the SMT using the raw bytes as the key
+        await this.smt.addLeaf(request.requestID, leafValue.data);
+        
+        // Mark as processed using hex representation for tracking
+        this.processedRequestIds.add(requestIdHex);
+        addedCount++;
+        
+        console.log(`[SMT] Added leaf for request ${requestIdHex.substring(0, 20)}...`);
       }
       
-      console.log(`[SMT] Finished adding leaves: ${successfulLeaves} successful, ${failedLeaves} failed`);
-
-      // Ensure we have a valid root hash
-      if (!smt.rootHash || !smt.rootHash.data) {
-        console.error("[SMT] Generated an invalid root hash, using fallback hash");
-        return new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]); // Fallback hash
-      }
+      console.log(`[SMT] Processed ${requests.length} requests: ${addedCount} added, ${skippedCount} skipped`);
+      console.log(`[SMT] Total unique requests in SMT: ${this.processedRequestIds.size}`);
       
-      // Log detailed diagnostic about the root hash
-      const rootHashData = smt.rootHash.data;
-      console.log(`[SMT] Generated valid root hash with length ${rootHashData.length}`);
-      console.log(`[SMT] First 8 bytes of root hash: ${Array.from(rootHashData.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join('')}`);
-
-      // Return the root hash data
+      // Get the root hash
+      const rootHashData = this.smt.rootHash.data;
+      console.log(`[SMT] Generated hashroot with ${rootHashData.length} bytes`);
+      
       return rootHashData;
     } catch (error) {
       console.error(`[SMT] Critical error in hashroot generation:`, error);
       // Return a deterministic fallback hash in case of any error
       return new Uint8Array([0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED, 0xFA, 0xCE]);
+    }
+  }
+  
+  /**
+   * Get an inclusion proof for a specific request ID from the SMT
+   * The SMT will return an appropriate proof whether the leaf exists or not
+   * 
+   * @param requestId The request ID to generate a proof for (can be bytes, hex string, or Buffer)
+   * @returns The inclusion proof or null if SMT isn't initialized
+   */
+  public async getInclusionProof(requestId: Uint8Array | string | Buffer): Promise<any> {
+    // Convert the requestId to the appropriate format for SMT
+    let requestIdBytes: Uint8Array;
+    let requestIdHex: string;
+    
+    if (requestId instanceof Uint8Array) {
+      requestIdBytes = requestId;
+      requestIdHex = Buffer.from(requestId).toString('hex');
+    } else if (requestId instanceof Buffer) {
+      requestIdBytes = new Uint8Array(requestId);
+      requestIdHex = requestId.toString('hex');
+    } else if (typeof requestId === 'string') {
+      // If it's a hex string, convert to bytes
+      if (requestId.startsWith('0x')) {
+        const hexValue = requestId.slice(2); // Remove 0x prefix
+        requestIdBytes = Buffer.from(hexValue, 'hex');
+      } else {
+        // Assume it's already a hex string without 0x prefix
+        requestIdBytes = Buffer.from(requestId, 'hex');
+      }
+      requestIdHex = requestId.replace(/^0x/, '');
+    } else {
+      throw new Error(`Unsupported requestId type: ${typeof requestId}`);
+    }
+    
+    console.log(`[SMT] Getting inclusion proof for requestId ${requestIdHex.substring(0, 20)}...`);
+    
+    // Check if we have an SMT initialized
+    if (!this.smt) {
+      console.error(`[SMT] No SMT initialized yet, cannot generate proof`);
+      return null;
+    }
+    
+    try {
+      // Generate the proof using the SMT's getPath method with the bytes
+      // This will return a proper Merkle path whether the leaf exists or not
+      console.log(`[SMT] Generating proof for requestId with ${requestIdBytes.length} bytes`);
+      const proof = this.smt.getPath(requestIdBytes);
+      
+      // Determine if this is a positive or negative inclusion proof
+      const isPositiveProof = this.processedRequestIds.has(requestIdHex);
+      console.log(`[SMT] Generated ${isPositiveProof ? 'positive' : 'negative'} inclusion proof with ${proof.steps.length} steps`);
+      
+      return proof;
+    } catch (error) {
+      console.error(`[SMT] Error generating inclusion proof for requestId:`, error);
+      return null;
     }
   }
 

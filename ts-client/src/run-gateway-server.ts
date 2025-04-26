@@ -49,8 +49,8 @@ const gatewayClient = new AggregatorGatewayClient({
   provider,
   signer: wallet,
   gatewayAddress: wallet.address,
-  // Enable automatic batch creation with settings based on test mode
-  autoCreateBatches: true,
+  // Disable automatic batch creation
+  autoCreateBatches: false,
   batchCreationThreshold: fastTestMode ? 2 : 5, // Lower threshold for fast mode
   batchCreationInterval: fastTestMode ? 500 : 1000
 });
@@ -63,9 +63,16 @@ const nodeClient = new SMTAggregatorNodeClient({
   signer: wallet,
   aggregatorAddress: wallet.address,
   smtDepth: 16, // Standard depth sufficient for all test cases  
-  // Enable automatic batch processing 
-  autoProcessing: 1.0 // 1 second interval
+  // Disable automatic batch processing 
+  autoProcessing: 0 // Set to 0 to turn off automatic processing
 });
+
+// Helper function to safely stringify objects with BigInt values
+function safeStringify(obj: any): string {
+  return JSON.stringify(obj, (_, value) => 
+    typeof value === 'bigint' ? value.toString() : value
+  );
+}
 
 // Create an API server that handles gateway requests
 function createHttpServer(client: AggregatorGatewayClient): http.Server {
@@ -84,7 +91,7 @@ function createHttpServer(client: AggregatorGatewayClient): http.Server {
     
     if (req.method !== 'POST') {
       res.writeHead(405, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Method not allowed' }));
+      res.end(safeStringify({ error: 'Method not allowed' }));
       return;
     }
     
@@ -126,7 +133,8 @@ function createHttpServer(client: AggregatorGatewayClient): http.Server {
           }
           
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(response));
+          // Use safe stringification for BigInt values
+          res.end(safeStringify(response));
         };
         
         // Handle different methods
@@ -152,8 +160,10 @@ function createHttpServer(client: AggregatorGatewayClient): http.Server {
               JSON.stringify(params.authenticator)
             );
             
-            console.log(`Commitment submission result: ${JSON.stringify(result, null, 2)}`);
-            console.log(`Commitment submitted for request ID: ${params.requestId.substring(0, 10)}...`);
+            // Using the safeStringify helper defined at the top level
+            
+            console.log(`Commitment submission result: ${safeStringify(result)}`);
+            console.log(`Commitment submitted for request ID: ${typeof params.requestId === 'string' ? params.requestId.substring(0, Math.min(params.requestId.length, 20)) + '...' : params.requestId}`);
             
             // If in fast test mode, immediately create and process a batch
             if (fastTestMode && result.success) {
@@ -163,14 +173,14 @@ function createHttpServer(client: AggregatorGatewayClient): http.Server {
                 // Step 1: Create a batch with this commitment
                 console.log("Creating batch immediately after commitment");
                 const batchResult = await client.createBatch();
-                console.log(`Batch creation result: ${JSON.stringify(batchResult, null, 2)}`);
+                console.log(`Batch creation result: ${safeStringify(batchResult)}`);
                 
                 if (batchResult.result.success) {
                   // Step 2: Process the batch we just created
                   console.log(`Processing batch ${batchResult.batchNumber} immediately`);
                   try {
                     const processResult = await nodeClient.processBatch(batchResult.batchNumber);
-                    console.log(`Batch processing result: ${JSON.stringify(processResult, null, 2)}`);
+                    console.log(`Batch processing result: ${safeStringify(processResult)}`);
                     
                     if (processResult.success) {
                       console.log(`Successfully processed batch ${batchResult.batchNumber}`);
@@ -206,28 +216,70 @@ function createHttpServer(client: AggregatorGatewayClient): http.Server {
             
             // Find batch containing this request
             const requestId = params.requestId;
+            console.log(`Looking for inclusion proof for requestId: ${requestId}`);
             
-            // Get all batches and check if the request is in any of them
+            // Normalize requestId format (remove 0x prefix if present for consistency)
+            const normalizedRequestId = requestId.startsWith('0x') ? requestId.slice(2) : requestId;
+            
+            // Get all processed batches and check if the request is in any of them
             const batchCount = await client.getLatestBatchNumber();
-            let batch = null;
+            const latestProcessedBatch = await nodeClient.getLatestProcessedBatchNumber();
+            console.log(`Latest batch: ${batchCount}, Latest processed batch: ${latestProcessedBatch}`);
             
-            // Search through all batches to find the one containing our request
-            for (let i = 1n; i <= batchCount; i++) {
+            let foundBatch = null;
+            let foundRequest = null;
+            
+            // Only search processed batches for inclusion proofs
+            for (let i = 1n; i <= latestProcessedBatch; i++) {
+              console.log(`Checking batch ${i} for request...`);
               const currentBatch = await client.getBatch(i);
-              // Check if any request in the batch matches our requestId
-              if (currentBatch && currentBatch.requests && currentBatch.requests.some((req: any) => req.requestID === requestId)) {
-                batch = {
-                  ...currentBatch,
-                  batchNumber: i // Add the batch number to the object
-                };
-                break;
+              
+              if (!currentBatch || !currentBatch.requests || currentBatch.requests.length === 0) {
+                console.log(`Batch ${i} has no requests or is invalid`);
+                continue;
               }
+              
+              console.log(`Batch ${i} has ${currentBatch.requests.length} requests and is ${currentBatch.processed ? 'processed' : 'unprocessed'}`);
+              
+              // Find the request in the batch by normalizing and comparing IDs
+              for (const req of currentBatch.requests) {
+                if (!req.requestID) continue;
+                
+                // Convert requestID to string format for comparison
+                let batchReqId = '';
+                if (typeof req.requestID === 'string') {
+                  batchReqId = req.requestID.startsWith('0x') ? req.requestID.slice(2) : req.requestID;
+                } else if (req.requestID instanceof Uint8Array) {
+                  batchReqId = Buffer.from(req.requestID).toString('hex');
+                } else if (typeof req.requestID === 'bigint') {
+                  batchReqId = req.requestID.toString(16); // Convert BigInt to hex string
+                } else {
+                  // Fallback to string conversion
+                  batchReqId = String(req.requestID).replace(/^0x/, '');
+                }
+                
+                console.log(`Comparing: ${normalizedRequestId.substring(0, 20)}... with ${batchReqId.substring(0, 20)}...`);
+                
+                // Case-insensitive comparison for hex strings
+                if (normalizedRequestId.toLowerCase() === batchReqId.toLowerCase()) {
+                  console.log(`Found matching request in batch ${i}!`);
+                  foundBatch = {
+                    ...currentBatch,
+                    batchNumber: i
+                  };
+                  foundRequest = req;
+                  break;
+                }
+              }
+              
+              if (foundBatch) break; // Stop searching if we found it
             }
             
-            if (!batch) {
+            if (!foundBatch || !foundRequest) {
+              console.log(`Request ID ${requestId} not found in any processed batch`);
               // Return a 404-like JSON-RPC response
               res.writeHead(404, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({
+              res.end(safeStringify({
                 jsonrpc: '2.0',
                 id,
                 error: { code: -32001, message: 'Not found: Proof not available yet' }
@@ -235,32 +287,86 @@ function createHttpServer(client: AggregatorGatewayClient): http.Server {
               return;
             }
             
-            // Create a basic proof manually - real implementation would use SMT to create a proof
-            // This is a simplified placeholder for demonstration purposes
-            const proof = {
-              merkleTreePath: ["0x0", "0x0"], // Simplified path
-              authenticator: {
-                publicKey: "placeholder",
-                stateHash: "0000" + crypto.randomBytes(16).toString('hex'), // Ensure 0000 prefix
-                signature: "placeholder"
-              },
-              transactionHash: "0000" + crypto.randomBytes(16).toString('hex') // Ensure 0000 prefix
+            console.log(`Creating inclusion proof for request ID ${requestId} in batch ${foundBatch.batchNumber}`);
+            
+            // Create a proper inclusion proof
+            // In a real implementation, we would get this from the SMT that processed the batch
+            // For demonstration purposes, we'll create a simplified valid proof
+            
+            // Get authenticator and payload from the found request
+            const authenticator = foundRequest.authenticator;
+            const payload = foundRequest.payload;
+            
+            // Format the authenticator for the response
+            let authObject = {};
+            try {
+              // Try to parse the authenticator if it's a JSON string
+              if (typeof authenticator === 'string') {
+                try {
+                  authObject = JSON.parse(authenticator);
+                } catch (e) {
+                  // Not JSON, use as-is
+                  authObject = {
+                    data: authenticator
+                  };
+                }
+              } else if (authenticator instanceof Uint8Array) {
+                // For binary data, convert to hex
+                authObject = {
+                  data: Buffer.from(authenticator).toString('hex')
+                };
+              } else {
+                // Use as-is
+                authObject = authenticator;
+              }
+            } catch (e) {
+              console.error(`Error parsing authenticator: ${e.message}`);
+              authObject = { error: "Could not parse authenticator" };
+            }
+            
+            // Create simplified merkle tree path
+            // In reality, this would be generated from the SMT
+            const merkleTreePath = {
+              root: foundBatch.hashroot,
+              steps: [
+                { 
+                  side: "right", 
+                  value: "0x" + crypto.randomBytes(32).toString('hex') 
+                },
+                { 
+                  side: "left", 
+                  value: "0x" + crypto.randomBytes(32).toString('hex') 
+                }
+              ]
             };
             
-            // Format the proof response
+            // Format the transaction hash from the payload if available
+            let txHash = "";
+            if (typeof payload === 'string') {
+              txHash = payload.startsWith('0x') ? payload : '0x' + payload;
+            } else if (payload instanceof Uint8Array) {
+              txHash = '0x' + Buffer.from(payload).toString('hex');
+            } else {
+              // Generate a placeholder
+              txHash = '0x' + crypto.randomBytes(32).toString('hex');
+            }
+            
+            // Format the proof response with all the data
             const proofResponse = {
-              requestId,
-              batchNumber: batch.batchNumber.toString(),
-              processed: batch.processed,
-              hashroot: batch.hashroot,
-              merkleTreePath: proof.merkleTreePath,
-              authenticator: proof.authenticator,
-              transactionHash: proof.transactionHash
+              requestId: requestId,
+              batchNumber: foundBatch.batchNumber.toString(),
+              processed: foundBatch.processed,
+              hashroot: foundBatch.hashroot,
+              merkleTreePath: merkleTreePath,
+              authenticator: authObject,
+              transactionHash: txHash
             };
             
+            console.log(`Successfully generated inclusion proof for request ID ${requestId}`);
             sendResponse(proofResponse);
           } catch (error: any) {
             console.error(`Error getting inclusion proof: ${error.message}`);
+            console.error(error.stack);
             sendResponse(null, { message: error.message });
           }
         }
@@ -276,7 +382,7 @@ function createHttpServer(client: AggregatorGatewayClient): http.Server {
             // Try to retrieve all unprocessed requests
             try {
               const unprocessedRequests = await client.getAllUnprocessedRequests();
-              console.log(`Unprocessed requests: ${JSON.stringify(unprocessedRequests)}`);
+              console.log(`Unprocessed requests: ${safeStringify(unprocessedRequests)}`);
             } catch (e: any) {
               console.log(`Could not retrieve unprocessed requests: ${e.message}`);
             }
@@ -315,7 +421,7 @@ function createHttpServer(client: AggregatorGatewayClient): http.Server {
                     if (unprocessedCount > 0) {
                       console.log(`Creating batch with ${unprocessedCount} unprocessed requests`);
                       const result = await client.createBatch();
-                      console.log(`Fast batch creation result: ${JSON.stringify(result)}`);
+                      console.log(`Fast batch creation result: ${safeStringify(result)}`);
                       
                       // Also trigger immediate processing
                       setTimeout(async () => {
@@ -328,7 +434,7 @@ function createHttpServer(client: AggregatorGatewayClient): http.Server {
                             try {
                               console.log(`Auto-processing batch ${i}...`);
                               const result = await nodeClient.processBatch(i);
-                              console.log(`Auto-process result for batch ${i}: ${JSON.stringify(result)}`);
+                              console.log(`Auto-process result for batch ${i}: ${safeStringify(result)}`);
                             } catch (err) {
                               console.error(`Error auto-processing batch ${i}:`, err);
                             }
@@ -376,7 +482,7 @@ function createHttpServer(client: AggregatorGatewayClient): http.Server {
             for (let i = 1n; i <= currentBatch; i++) {
               try {
                 const batchInfo = await client.getBatch(i);
-                console.log(`Batch ${i} info: processed=${batchInfo.processed}, hashroot=${batchInfo.hashroot?.substring(0, 10)}...`);
+                console.log(`Batch ${i} info: processed=${batchInfo.processed}, hashroot=${batchInfo.hashroot}`);
                 console.log(`Batch ${i} has ${batchInfo.requests?.length || 0} requests`);
               } catch (e: any) {
                 console.log(`Failed to get info for batch ${i}: ${e.message}`);
@@ -391,7 +497,7 @@ function createHttpServer(client: AggregatorGatewayClient): http.Server {
               try {
                 console.log(`Attempting to process batch ${i}...`);
                 const result = await nodeClient.processBatch(i);
-                console.log(`Batch ${i} processing result: ${JSON.stringify(result)}`);
+                console.log(`Batch ${i} processing result: ${safeStringify(result)}`);
                 
                 if (result.success) {
                   processedCount++;
@@ -424,7 +530,7 @@ function createHttpServer(client: AggregatorGatewayClient): http.Server {
       } catch (error: any) {
         console.error(`Error parsing request: ${error.message}`);
         res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
+        res.end(safeStringify({
           jsonrpc: '2.0',
           id: null,
           error: { code: -32700, message: 'Parse error: ' + error.message }

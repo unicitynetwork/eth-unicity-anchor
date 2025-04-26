@@ -98,11 +98,38 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
    * @returns Transaction result
    */
   public async submitCommitment(
-    requestID: bigint | string,
+    requestID: bigint | string | Uint8Array,
     payload: Uint8Array | string,
     authenticator: Uint8Array | string,
   ): Promise<TransactionResult> {
-    const id = typeof requestID === 'string' ? BigInt(requestID) : requestID;
+    // Convert requestID to bytes format
+    let requestIdBytes: Uint8Array;
+    
+    if (requestID instanceof Uint8Array) {
+      // Already in bytes format
+      requestIdBytes = requestID;
+    } else if (typeof requestID === 'string') {
+      // If it's a string that looks like a hex value, convert directly from hex
+      if (requestID.startsWith('0x')) {
+        try {
+          requestIdBytes = hexToBytes(requestID);
+          console.log(`Converted hex requestID to bytes: ${bytesToHex(requestIdBytes)}`);
+        } catch (e: any) {
+          console.log(`Failed to convert hex requestID, falling back to text encoding: ${e.message}`);
+          requestIdBytes = new TextEncoder().encode(requestID);
+        }
+      } else {
+        // Regular string, use text encoder
+        requestIdBytes = new TextEncoder().encode(requestID);
+      }
+    } else if (typeof requestID === 'bigint') {
+      // Convert BigInt to hex string and then to bytes
+      const hexString = '0x' + requestID.toString(16);
+      requestIdBytes = hexToBytes(hexString);
+      console.log(`Converted BigInt requestID to bytes: ${bytesToHex(requestIdBytes)}`);
+    } else {
+      throw new Error(`Unsupported requestID type: ${typeof requestID}`);
+    }
 
     // Convert string payloads to Uint8Array if needed
     const payloadBytes = typeof payload === 'string' ? new TextEncoder().encode(payload) : payload;
@@ -110,7 +137,8 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
     const authBytes =
       typeof authenticator === 'string' ? new TextEncoder().encode(authenticator) : authenticator;
 
-    return this.executeTransaction('submitCommitment', [id, payloadBytes, authBytes]);
+    console.log(`Submitting commitment with requestID bytes: ${bytesToHex(requestIdBytes)}`);
+    return this.executeTransaction('submitCommitment', [requestIdBytes, payloadBytes, authBytes]);
   }
 
   /**
