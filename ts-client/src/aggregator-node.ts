@@ -4,13 +4,16 @@ import {
   CommitmentRequest,
   TransactionResult,
   EventType,
-  SmtNode,
   BatchRequest,
+  Batch,
 } from './types';
 import { SparseMerkleTree } from '@unicitylabs/commons/lib/smt/SparseMerkleTree.js';
 import { HashAlgorithm } from '@unicitylabs/commons/lib/hash/HashAlgorithm.js';
 import { DataHasher } from '@unicitylabs/commons/lib/hash/DataHasher.js';
-import { ethers } from 'ethers';
+import { RequestId } from '@unicitylabs/commons/lib/api/RequestId.js';
+import { Authenticator } from '@unicitylabs/commons/lib/api/Authenticator.js';
+import { DataHash } from '@unicitylabs/commons/lib/hash/DataHash.js';
+import { Transaction } from '@unicitylabs/commons/lib/api/Transaction.js';
 import { bytesToHex, hexToBytes } from './utils';
 
 /**
@@ -24,14 +27,14 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
   private readonly batchProcessingInterval: number;
   private batchProcessingTimer?: NodeJS.Timeout;
   // Track which batches have been processed by this instance
-  protected processedBatches: Set<string> = new Set();
+  protected processedBatches: Set<bigint> = new Set();
   
   // Track processed requests
   private processedRequestIds: Set<string> = new Set();
   
   // Store the original request data (authenticator and transaction hash)
   // along with the requestId to be able to reconstruct complete inclusion proofs
-  private requestDataMap: Map<string, { authenticator: any, transactionHash: string }> = new Map();
+  private requestDataMap: Map<string, { authenticator: Authenticator, transactionHash: string }> = new Map();
   
   // Single persistent SMT instance for the entire lifecycle
   private smt: any = null; // Will be initialized when needed
@@ -39,7 +42,6 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
   constructor(config: AggregatorConfig) {
     super(config);
     this.aggregatorAddress = config.aggregatorAddress;
-    this.smtDepth = config.smtDepth || 32; // Default to 32 levels for SMT
     
     // Support both the new autoProcessing parameter and backward compatibility
     let autoProcessingEnabled = false;
@@ -102,17 +104,17 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
       
       for (let i = 1n; i <= latestProcessedBatchNumber; i++) {
         // Skip if already processed by this instance
-        if (this.processedBatches.has(i.toString())) {
-          continue;
+        if (this.processedBatches.has(i)) {
+	    console.log(`Already processed batch ${i}, skipping... `);
+            continue;
         }
         
         try {
-          console.log(`[Sync] Processing already processed batch ${i} to verify hashroot`);
+          console.log(`[Sync] Syncing to already processed batch ${i} to verify hashroot`);
           const batch = await this.getBatch(i);
           
           if (!batch.processed || !batch.hashroot) {
-            console.warn(`[Sync] Batch ${i} is marked as processed on-chain but has no hashroot, skipping`);
-            continue;
+            throw new Error(`[Sync] Batch ${i} is marked as processed on-chain but has no hashroot, critical integrity failure`);
           }
           
           // Calculate the hashroot locally
@@ -128,7 +130,7 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
           }
           
           // Convert our local hashroot to hex string for comparison
-          const localHashrootHex = ethers.hexlify(localHashroot);
+          const localHashrootHex = localHashroot.toDto;
           
           console.log(`[Sync] Comparing hashrooots for batch ${i}:`);
           console.log(`[Sync] Local calculated: ${localHashrootHex}`);
@@ -206,22 +208,17 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
    */
   protected async verifyHashrootConsensus(
     batchNumber: bigint, 
-    localHashroot: Uint8Array | string,
-    onChainHashroot: string
+    localHashroot: DataHash,
+    onChainHashroot: DataHash
   ): Promise<{success: boolean; error?: Error; critical?: boolean; waitForConsensus?: boolean; testOverride?: boolean}> {
     // Convert to hex string for comparison if needed
-    const localHashrootHex = typeof localHashroot === 'string' 
-      ? (localHashroot.startsWith('0x') ? localHashroot : `0x${localHashroot}`)
-      : ethers.hexlify(localHashroot);
+    const localHashrootHex = localHashroot.toDto();
     
     // Standardize the on-chain value in case of format differences
-    const normalizedOnChainHashroot = onChainHashroot.startsWith('0x') 
-      ? onChainHashroot 
-      : `0x${onChainHashroot}`;
+    const normalizedOnChainHashroot = onChainHashroot.toDto();
     
     console.log(`[Consensus] Comparing hashrooots for batch ${batchNumber}:`);
     console.log(`[Consensus] Local calculated: ${localHashrootHex}`);
-    console.log(`[Consensus] On-chain value (original): ${onChainHashroot}`);
     console.log(`[Consensus] On-chain value (normalized): ${normalizedOnChainHashroot}`);
     
     // Step 1: Check if our hashroot matches the on-chain value (checking both with and without 0x prefix)
@@ -230,16 +227,11 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
       
       // Log more details for debugging
       const localHashHex = localHashrootHex;
-      const localHashStripped = localHashHex.replace('0x', '');
       const onChainHashHex = normalizedOnChainHashroot;
-      const onChainHashStripped = onChainHashHex.replace('0x', '');
       
       console.log(`[Consensus-Debug] Local hash hex: ${localHashHex}`);
-      console.log(`[Consensus-Debug] Local hash stripped: ${localHashStripped}`);
       console.log(`[Consensus-Debug] OnChain hash hex: ${onChainHashHex}`);
-      console.log(`[Consensus-Debug] OnChain hash stripped: ${onChainHashStripped}`);
       console.log(`[Consensus-Debug] Direct compare: ${localHashHex === onChainHashHex}`);
-      console.log(`[Consensus-Debug] Stripped compare: ${localHashStripped === onChainHashStripped}`);
       
       // CRITICAL SECURITY ALERT - Data integrity failure
       console.error(`[Sync] CRITICAL SECURITY FAILURE: Hashroot mismatch detected for batch ${batchNumber}:`);
@@ -286,7 +278,7 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
     
     // Step 2: Verify consensus by checking if the batch is processed on the contract
     // The smart contract is the source of truth for whether quorum has been reached
-    try {
+/*    try {
       // Get the batch state directly from the contract
       const batchInfo = await this.getBatch(batchNumber);
       
@@ -324,7 +316,7 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
         success: false,
         error: error instanceof Error ? error : new Error(String(error))
       };
-    }
+    }*/
   }
 
   /**
@@ -335,10 +327,10 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
     batchNumber: bigint,
     batchInfo: { processed: boolean; hashroot?: string; requests: BatchRequest[] }
   ): Promise<TransactionResult> {
-    const batchKey = batchNumber.toString();
+//    const batchKey = batchNumber.toString();
     
     // If already processed locally, no need to verify again
-    if (this.processedBatches.has(batchKey)) {
+    if (this.processedBatches.has(batchNumber)) {
       return {
         success: false,
         error: new Error(`Batch ${batchNumber} is already processed`),
@@ -348,7 +340,7 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
     // If no hashroot, we can't verify
     if (!batchInfo.hashroot) {
       console.warn(`Batch ${batchNumber} is marked as processed but has no hashroot`);
-      this.processedBatches.add(batchKey);
+      this.processedBatches.add(batchNumber);
       return {
         success: false,
         error: new Error(`Batch ${batchNumber} has no hashroot to verify`),
@@ -358,18 +350,18 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
     // Calculate the hashroot locally and compare
     try {
       const localHashroot = await this.calculateHashroot(batchInfo.requests);
-      const localHashrootHex = ethers.hexlify(localHashroot);
+      const localHashrootHex = localHashroot.toDto();
       
       // Use the centralized consensus verification function
       const consensusResult = await this.verifyHashrootConsensus(
         batchNumber, 
-        localHashrootHex, 
+        localHashroot, 
         batchInfo.hashroot
       );
       
       if (consensusResult.success) {
         console.log(`Hashroot verification successful for batch ${batchNumber}`);
-        this.processedBatches.add(batchKey);
+        this.processedBatches.add(batchNumber);
         return {
           success: true,
           message: `Batch ${batchNumber} hashroot verified successfully`,
@@ -411,7 +403,7 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
    * Calculate hashroot for a set of requests
    * Used for validation during sync
    */
-  protected async calculateHashroot(requests: BatchRequest[]): Promise<Uint8Array> {
+  protected async calculateHashroot(requests: CommitmentRequest[]): Promise<DataHash> {
     console.log(`[Hashroot] Calculating hashroot for ${requests.length} requests`);
     
     // Create the SMT if it doesn't exist yet
@@ -423,55 +415,32 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
     
     // Add all commitments as leaves
     for (const request of requests) {
-      // Convert requestId to SMT path using our helper method (with 1 prefix)
-      const { path: requestIdPath, hex: requestIdHex } = this.convertRequestIdToSMTPath(request.requestID);
+      // Get the requestId as string for tracking
+      const requestIdStr = request.requestID.toDto();
       
-      console.log(`[Hashroot] RequestID as SMT path: ${requestIdPath}`);
+      // Create DataHash from the transaction hash
+      const txDataHash = request.payload;
       
-      // 1. Parse authenticator as JSON
-      let authenticatorObj;
-      try {
-        const authText = Buffer.from(hexToBytes(request.authenticator)).toString();
-        authenticatorObj = JSON.parse(authText);
-      } catch (e: any) {
-        // If not valid JSON, handle gracefully
-        console.warn(`[Hashroot] Failed to parse authenticator as JSON: ${e.message}`);
-        // Use raw authenticator if not valid JSON
-        authenticatorObj = request.authenticator; 
-      }
-      
-      // 2. Get transaction hash from payload
-      const transactionHash = request.payload;
-      
-      // 3. Combine into the structure expected
-      const jsonData = {
-        authenticator: authenticatorObj,
-        transactionHash: transactionHash
-      };
-      
-      // 4. Convert to JSON and hash it
-      const jsonString = JSON.stringify(jsonData);
-      const leafValue = await new DataHasher(HashAlgorithm.SHA256)
-        .update(new TextEncoder().encode(jsonString))
-        .digest();
+      // Create a Transaction object that handles the leaf value computation
+      const transaction = await Transaction.create(request.authenticator, txDataHash);
       
       // Log leaf data for debugging
-      console.log(`[Hashroot] Adding leaf for requestId ${requestIdHex.substring(0, 20)}...`);
+      console.log(`[Hashroot] Adding leaf for requestId ${requestIdStr}...`);
       
-      // 5. Add the leaf to the SMT using SMT path with 1 prefix
-      await this.smt.addLeaf(requestIdPath, leafValue.data);
+      // Add the leaf to the SMT using BigInt from RequestId
+      await this.smt.addLeaf(request.requestID.toBigInt(), transaction.leafValue.imprint);
       
       // Store the data for inclusion proofs
-      this.processedRequestIds.add(requestIdHex);
-      this.requestDataMap.set(requestIdHex, {
-        authenticator: authenticatorObj,
-        transactionHash: `0000${transactionHash}` // Adding "0000" prefix for SHA-256 hash algorithm
+      this.processedRequestIds.add(requestIdStr);
+      this.requestDataMap.set(requestIdStr, {
+        authenticator: request.authenticator,
+        transactionHash: request.payload
       });
     }
     
     // Get the root hash
-    const rootHashData = this.smt.rootHash.data;
-    console.log(`[Hashroot] Generated hashroot with ${rootHashData.length} bytes`);
+    const rootHashData = this.smt.rootHash;
+    console.log(`[Hashroot] Generated hashroot with ${rootHashData.imprint}`);
     
     return rootHashData;
   }
@@ -483,13 +452,13 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
    * @returns Transaction result
    */
   public async submitHashroot(
-    batchNumber: bigint | string,
-    hashroot: Uint8Array | string,
+    batchNumber: bigint,
+    hashroot: DataHash,
   ): Promise<TransactionResult> {
-    const bn = typeof batchNumber === 'string' ? BigInt(batchNumber) : batchNumber;
+    const bn =  batchNumber;
     
     // Standardize hashroot to ensure consistent format
-    let hrBytes: Uint8Array;
+/*    let hrBytes: Uint8Array;
     if (typeof hashroot === 'string') {
       // Make sure it has 0x prefix for consistent handling
       const normalizedHashroot = hashroot.startsWith('0x') ? hashroot : `0x${hashroot}`;
@@ -497,15 +466,17 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
       hrBytes = hexToBytes(normalizedHashroot);
     } else {
       hrBytes = hashroot;
-    }
+    }*/
+
+    const hrootHex = hashroot.toDto();
 
     console.log(`[HashRoot] Submitting hashroot for batch ${bn} to the transaction queue`);
-    console.log(`[HashRoot] Hashroot value: ${ethers.hexlify(hrBytes)}`);
+    console.log(`[HashRoot] Hashroot value: ${hrootHex}`);
     console.log(`[HashRoot] This submission will be processed sequentially with proper confirmation`);
     
     // The executeTransaction method is now wrapping our queue implementation
     // It will categorize this as HASHROOT_VOTE and ensure proper confirmation
-    return this.executeTransaction('submitHashroot', [bn, hrBytes]);
+    return this.executeTransaction('submitHashroot', [bn, hrashroot.imprint]);
   }
 
   /**
@@ -519,23 +490,14 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
    * @param requestId The request ID in any format
    * @returns Object with BigInt and hex string representation of the requestId
    */
-  private convertRequestIdToBigInt(requestId: any): { bigint: bigint, hex: string } {
+/*  private convertRequestIdToBigInt(requestId: any): { bigint: bigint, hex: string } {
     let requestIdBigInt: bigint;
     let requestIdHex: string;
     
     if (typeof requestId === 'string') {
       requestIdHex = requestId.replace(/^0x/, '');
       // Convert hex string to BigInt
-      try {
-        requestIdBigInt = BigInt('0x' + requestIdHex);
-      } catch (e) {
-        // If not valid hex, use hash fallback
-        console.warn(`Cannot convert string to BigInt directly: ${requestIdHex}. Using hash fallback.`);
-        const hashVal = [...requestIdHex].reduce((acc, char) => {
-          return ((acc << 5) - acc + char.charCodeAt(0)) | 0;
-        }, 0);
-        requestIdBigInt = BigInt(Math.abs(hashVal));
-      }
+      requestIdBigInt = BigInt('0x' + requestIdHex);
     } else if (typeof requestId === 'bigint') {
       requestIdBigInt = requestId;
       requestIdHex = requestId.toString(16);
@@ -547,60 +509,11 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
       requestIdHex = Buffer.from(requestId).toString('hex');
       requestIdBigInt = BigInt('0x' + requestIdHex);
     } else {
-      // Try to convert other formats to string first
-      const requestIdStr = String(requestId).replace(/^0x/, '');
-      requestIdHex = requestIdStr;
-      try {
-        // Try to interpret as hex
-        requestIdBigInt = BigInt('0x' + requestIdStr);
-      } catch (e) {
-        // Use a hash of the string as fallback
-        console.warn(`Cannot convert to BigInt: ${requestIdStr}. Using hash fallback.`);
-        // Simple hash function
-        const hashVal = [...requestIdStr].reduce((acc, char) => {
-          return ((acc << 5) - acc + char.charCodeAt(0)) | 0;
-        }, 0);
-        requestIdBigInt = BigInt(Math.abs(hashVal));
-      }
+      throw new Error("Cannot convert "+requestId+" to bigint");
     }
     
     return { bigint: requestIdBigInt, hex: requestIdHex };
-  }
-  
-  /**
-   * Helper method to convert a requestId to SMT path format
-   * SMT paths require a '1' prefix to properly preserve leading zeros
-   * 
-   * @param requestId The request ID in any format
-   * @returns Object with SMT-formatted BigInt path and hex string representation
-   */
-  private convertRequestIdToSMTPath(requestId: any): { path: bigint, hex: string } {
-    // First normalize to hex string without 0x prefix
-    let hexString: string;
-    
-    if (typeof requestId === 'string') {
-      // Remove 0x if present
-      hexString = requestId.replace(/^0x/, '');
-    } else if (requestId instanceof Uint8Array || Buffer.isBuffer(requestId)) {
-      // Convert bytes to hex string
-      hexString = Buffer.from(requestId).toString('hex');
-    } else if (typeof requestId === 'bigint' || typeof requestId === 'number') {
-      // Convert numeric to hex string
-      hexString = (typeof requestId === 'bigint' ? 
-        requestId.toString(16) : BigInt(requestId).toString(16));
-    } else {
-      // For any other type, stringify first
-      hexString = String(requestId).replace(/^0x/, '');
-    }
-    
-    // Create SMT path by adding '1' prefix to preserve leading zeros
-    const smtPath = BigInt('0x1' + hexString);
-    
-    console.log(`Normalized request ID to hex: ${hexString.substring(0, 20)}...`);
-    console.log(`SMT path with 1-prefix: 0x1${hexString.substring(0, 20)}...`);
-    
-    return { path: smtPath, hex: hexString };
-  }
+  }*/
 
   /**
    * Process a batch by generating a hashroot and submitting it to the contract
@@ -608,12 +521,12 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
    * @param batchNumber The batch number to process
    * @returns Transaction result
    */
-  public async processBatch(batchNumber: bigint | string): Promise<TransactionResult> {
+  public async processBatch(batchNumber: bigint): Promise<TransactionResult> {
     try {
-      const bn = typeof batchNumber === 'string' ? BigInt(batchNumber) : batchNumber;
+      const bn = batchNumber;
 
       // First check if this batch has already been processed by this instance
-      if (this.processedBatches.has(bn.toString())) {
+      if (this.processedBatches.has(bn)) {
         return {
           success: false,
           error: new Error(`Batch ${bn} is already processed by this instance`),
@@ -654,69 +567,46 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
       let skippedCount = 0;
       
       for (const request of requests) {
-        // Convert requestId to SMT path using our helper method (with 1 prefix)
-        const { path: requestIdPath, hex: requestIdHex } = this.convertRequestIdToSMTPath(request.requestID);
-        
-        console.log(`RequestID as SMT path: ${requestIdPath}`);
+        // Get the requestId as string for tracking
+        const requestIdStr = request.requestID.toDto();
         
         // Skip already processed requests
-        if (this.processedRequestIds.has(requestIdHex)) {
-          console.log(`Skipping already processed request ${requestIdHex.substring(0, 20)}...`);
+        if (this.processedRequestIds.has(requestIdStr)) {
+          console.log(`Skipping already processed request ${requestIdStr}`);
           skippedCount++;
           continue;
         }
         
-        // 1. Parse authenticator as JSON
-        let authenticatorObj;
-        try {
-          const authText = Buffer.from(hexToBytes(request.authenticator)).toString();
-          authenticatorObj = JSON.parse(authText);
-        } catch (e: any) {
-          // If not valid JSON, handle gracefully
-          console.warn(`Failed to parse authenticator as JSON for request ${requestIdHex.substring(0, 20)}...: ${e.message}`);
-          // Use raw authenticator if not valid JSON
-          authenticatorObj = request.authenticator; 
-        }
+        // Create DataHash from the transaction hash
+        const txDataHash = request.payload;
         
-        // 2. Get transaction hash from payload
-        const transactionHash = request.payload;
+        // Create a Transaction object that handles the leaf value computation
+        const transaction = await Transaction.create(request.authenticator, txDataHash);
         
-        // 3. Combine into the structure expected by InclusionProof verification
-        const jsonData = {
-          authenticator: authenticatorObj,
-          transactionHash: transactionHash
-        };
+        console.log(`Created transaction with leaf value for request ${requestIdStr}`);
         
-        // 4. Convert to JSON and hash it
-        const jsonString = JSON.stringify(jsonData);
-        const leafValue = await new DataHasher(HashAlgorithm.SHA256)
-          .update(new TextEncoder().encode(jsonString))
-          .digest();
+        // Add the leaf to the SMT using BigInt from RequestId
+        await this.smt.addLeaf(request.requestID.toBigInt(), transaction.leafValue.imprint);
         
-        console.log(`Calculated leaf value for request ${requestIdHex.substring(0, 20)}...`);
-        
-        // 5. Add the leaf to the SMT using BigInt as the key (UniCity SMT expects BigInt)
-        await this.smt.addLeaf(requestIdPath, leafValue.data);
-        
-        // Mark as processed using hex representation for tracking
-        this.processedRequestIds.add(requestIdHex);
+        // Mark as processed using string representation for tracking
+        this.processedRequestIds.add(requestIdStr);
         
         // Store the original request data for inclusion proof generation
-        this.requestDataMap.set(requestIdHex, {
-          authenticator: authenticatorObj,
-          transactionHash: `0000${transactionHash}` // Adding "0000" prefix for SHA-256 hash algorithm
+        this.requestDataMap.set(requestIdStr, {
+          authenticator: request.authenticator,
+          transactionHash: request.payload
         });
         
         addedCount++;
         
-        console.log(`Added leaf for request ${requestIdHex.substring(0, 20)}...`);
+        console.log(`Added leaf for request ${requestIdStr}`);
       }
       
       console.log(`Processed ${requests.length} requests: ${addedCount} added, ${skippedCount} skipped`);
       console.log(`Total unique requests in SMT: ${this.processedRequestIds.size}`);
       
       // Get the root hash
-      const rootHashData = this.smt.rootHash.data;
+      const rootHashData = this.smt.rootHash;
       console.log(`Generated hashroot with ${rootHashData.length} bytes`);
 
       // Submit the hashroot
@@ -724,7 +614,7 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
       
       // If successful, add to processed batches to avoid duplicate processing
       if (result.success) {
-        this.processedBatches.add(bn.toString());
+        this.processedBatches.add(bn);
         console.log(`Batch ${bn} processed successfully and added to processed list`);
       }
       
@@ -763,7 +653,7 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
       console.log(`Checking batch ${nextBatchToProcess}...`);
       
       // Skip batches that have already been processed by this instance
-      if (this.processedBatches.has(nextBatchToProcess.toString())) {
+      if (this.processedBatches.has(nextBatchToProcess)) {
         console.log(`Skipping batch ${nextBatchToProcess} as it was already processed by this instance`);
         // Add a result to indicate this batch was skipped but previously processed
         results.push({
@@ -854,8 +744,8 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
     this.on(EventType.BatchCreated, async (_, data: { batchNumber: bigint }) => {
       try {
         // Skip if already processed by this instance
-        const batchKey = data.batchNumber.toString();
-        if (this.processedBatches.has(batchKey)) {
+//        const batchKey = data.batchNumber.toString();
+        if (this.processedBatches.has(data.batchNumber)) {
           console.log(`[BatchCreated] Batch ${data.batchNumber} already processed by this instance, skipping`);
           return;
         }
@@ -927,15 +817,13 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
    * Get an inclusion proof for a specific request ID from the SMT
    * The SMT will return an appropriate proof whether the leaf exists or not
    * 
-   * @param requestId The request ID to generate a proof for (can be bytes, hex string, or Buffer)
+   * @param requestId The request ID to generate a proof for
    * @returns The inclusion proof or null if SMT isn't initialized
    */
-  public async getInclusionProof(requestId: Uint8Array | string | Buffer | bigint): Promise<any> {
-    // Convert the requestId to SMT path using our helper method (with 1 prefix)
-    const { path: requestIdPath, hex: requestIdHex } = this.convertRequestIdToSMTPath(requestId);
+  public async getInclusionProof(requestId: RequestId): Promise<any> {
     
-    console.log(`Getting inclusion proof for requestId ${requestIdHex.substring(0, 20)}...`);
-    console.log(`RequestID as SMT path: ${requestIdPath}`);
+    const requestIdStr = requestId.toDto();
+    console.log(`Getting inclusion proof for requestId ${requestIdStr}`);
     
     // Check if we have an SMT initialized
     if (!this.smt) {
@@ -944,23 +832,23 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
     }
     
     try {
-      // Generate the proof using the SMT's getPath method with SMT path (with 1 prefix)
+      // Generate the proof using the SMT's getPath method with BigInt from RequestId
       // This will return a proper Merkle path whether the leaf exists or not
-      const proof = this.smt.getPath(requestIdPath);
+      const proof = this.smt.getPath(requestId.toBigInt());
       
       // Determine if this is a positive or negative inclusion proof
-      const isPositiveProof = this.processedRequestIds.has(requestIdHex);
+      const isPositiveProof = this.processedRequestIds.has(requestIdStr);
       console.log(`Generated ${isPositiveProof ? 'positive' : 'negative'} inclusion proof with ${proof.steps.length} steps`);
       
       // Get the original request data (if available)
-      const originalData = this.requestDataMap.get(requestIdHex);
+      const originalData = this.requestDataMap.get(requestIdStr);
       
       if (originalData) {
-        console.log(`Found original data for requestId ${requestIdHex.substring(0, 20)}`);
+        console.log(`Found original data for requestId ${requestIdStr}`);
         // Attach the original data to the proof object
         proof.leafData = originalData;
       } else {
-        console.log(`No original data found for requestId ${requestIdHex.substring(0, 20)}`);
+        console.log(`No original data found for requestId ${requestIdStr}`);
       }
       
       return proof;
@@ -977,13 +865,13 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
    * @param requestID The request ID to generate proof for
    * @returns The Merkle proof or null if not found
    */
-  public async generateMerkleProof(
-    batchNumber: bigint | string,
-    requestID: bigint | string,
+/*  public async generateMerkleProof(
+    batchNumber: bigint ,
+    requestID: RequestId
   ): Promise<{ proof: string[]; value: string } | null> {
     try {
-      const bn = typeof batchNumber === 'string' ? BigInt(batchNumber) : batchNumber;
-      const id = typeof requestID === 'string' ? requestID.toString() : requestID.toString();
+      const bn = batchNumber;
+//      const id = typeof requestID === 'string' ? requestID.toString() : requestID.toString();
 
       // Get the batch data
       const { requests, processed } = await this.getBatch(bn);
@@ -993,25 +881,14 @@ export class AggregatorNodeClient extends UniCityAnchorClient {
       }
 
       // Check if the request is in this batch
-      const request = requests.find((r) => r.requestID === id);
+      const request = requests.find((r) => r.requestID.toDto() === requestID.toDto());
       if (!request) {
         return null; // Request not found in this batch
       }
-
-      // Use our new getInclusionProof method
-      const inclusionProof = await this.getInclusionProof(id);
-      if (!inclusionProof) {
-        return null;
-      }
-
-      // For backward compatibility, format the proof in the expected format
-      return {
-        proof: inclusionProof.steps.map((step: any) => step.toString()),
-        value: request.payload + request.authenticator,
-      };
-    } catch (error) {
-      console.error('Error generating Merkle proof:', error);
-      return null;
+    } catch(error){
+	console.error("Error "
     }
-  }
+      // Use our new getInclusionProof method
+    return this.getInclusionProof(requestID);
+  }*/
 }

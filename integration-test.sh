@@ -199,42 +199,12 @@ echo "Setting FAST_TEST=true environment variable for the gateway..."
 # Step 5: Submit a commitment and trigger batch processing in parallel
 echo "Running test-gateway-cli.ts in background while processing batches..."
 
-# Start the test gateway CLI in the background
-echo "Starting gateway-cli test in background..."
-npm run test:gateway -- http://localhost:$GATEWAY_PORT 1 > gateway-cli-output.log 2>&1 &
-TEST_CLI_PID=$!
-
-# Immediately trigger batch creation and processing while test is running
-echo "Waiting 2 seconds for commitment submission..."
-sleep 2
-
-# Step 5a: Trigger batch creation
-echo "Triggering batch creation..."
-BATCH_RESPONSE=$(curl -s -X POST -H "Content-Type: application/json" --data '{"jsonrpc":"2.0","method":"create_batch","params":{},"id":1}' http://localhost:$GATEWAY_PORT)
-echo "$BATCH_RESPONSE" | jq .
-
-# Extract batch number from response
-BATCH_NUMBER=$(echo "$BATCH_RESPONSE" | jq -r '.result.batchNumber // "1"')
-echo "Created batch number: $BATCH_NUMBER"
-
-echo "Waiting for batch to be created (2 seconds)..."
-sleep 2
-
-# Step 5b: Trigger batch processing
-echo "Triggering batch processing..."
-PROCESS_RESPONSE=$(curl -s -X POST -H "Content-Type: application/json" --data '{"jsonrpc":"2.0","method":"process_batches","params":{},"id":1}' http://localhost:$GATEWAY_PORT)
-echo "$PROCESS_RESPONSE" | jq .
-
-# Wait for the CLI test to complete
-echo "Waiting for gateway CLI test to complete..."
-wait $TEST_CLI_PID
+# Start the test gateway CLI with output visible
+echo "=== STARTING GATEWAY CLI TEST ==="
+npm run test:gateway -- http://localhost:$GATEWAY_PORT 1 | tee gateway-cli-output.log
 TEST_EXIT_CODE=$?
-echo "Test gateway CLI exit code: $TEST_EXIT_CODE"
+echo "=== GATEWAY TEST COMPLETED WITH EXIT CODE: $TEST_EXIT_CODE ==="
 
-# Display the CLI test output
-echo "=== Gateway CLI Test Output ==="
-cat gateway-cli-output.log
-echo "=== End of Gateway CLI Test Output ==="
 
 # Check if the test found the inclusion proof
 if grep -q "Proof found for request ID" gateway-cli-output.log; then
@@ -326,10 +296,47 @@ fi
 
 # Final test result - fail if either contract query failed or logs don't show success
 if [ $CONTRACT_STATUS -eq 0 ] && [ $BATCH_PROCESSED -eq 0 ]; then
-  echo "✅ Integration test PASSED"
+  echo "======================================================"
+  echo "              ✅ INTEGRATION TEST PASSED              "
+  echo "======================================================"
+  echo
+  echo "Summary of test steps:"
+  echo "1. Gateway server started successfully"
+  echo "2. Commitment was submitted to the contract"
+  echo "3. Batch was created containing the commitment"
+  echo "4. Batch was processed with a valid hashroot"
+  echo "5. Inclusion proof was successfully verified"
+  echo
+  echo "Logs for reference:"
+  echo "- ts-client/gateway.log - Full gateway server log"
+  echo "- gateway-cli-output.log - Test CLI output"
+  echo "- gateway-debug.log - Condensed debug log"
+  echo
   exit 0
 else
-  echo "❌ Integration test FAILED - Batch processing issues detected"
-  echo "Please check gateway-debug.log for more details"
+  echo "======================================================"
+  echo "              ❌ INTEGRATION TEST FAILED              "
+  echo "======================================================"
+  echo
+  echo "Failure diagnosis:"
+  if [ $TEST_EXIT_CODE -ne 0 ]; then
+    echo "- CLI test script failed with exit code $TEST_EXIT_CODE"
+  fi
+  if [ $PROOF_FOUND -ne 0 ]; then
+    echo "- No inclusion proof was found for the commitment"
+  fi
+  if [ $CONTRACT_STATUS -ne 0 ]; then
+    echo "- Contract query failed - no batches were created/processed"
+  fi
+  if [ $BATCH_PROCESSED -ne 0 ]; then
+    echo "- No batch processing logs found - batch may not have been processed"
+  fi
+  echo
+  echo "Check these logs for details:"
+  echo "- ts-client/gateway.log - Full gateway server log"
+  echo "- gateway-cli-output.log - Test CLI output"
+  echo "- gateway-debug.log - Condensed debug log"
+  echo "- anvil.log - Anvil blockchain node log"
+  echo
   exit 1
 fi

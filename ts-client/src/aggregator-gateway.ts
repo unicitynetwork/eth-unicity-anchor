@@ -66,6 +66,10 @@ export interface BatchSubmissionDto {
   jwt?: string;       // JWT token for authentication
 }
 
+// Intermin solution for JSON encodding into byte array
+const jsonToUint8Array = (jsonInput: string | object): Uint8Array => new TextEncoder().encode(typeof jsonInput === 'string' ? JSON.stringify(JSON.parse(jsonInput)) : JSON.stringify(jsonInput));
+const uint8ArrayToJsonObject = (uint8Array: Uint8Array): any => JSON.parse(new TextDecoder().decode(uint8Array));
+
 /**
  * Aggregator Gateway client
  * Implements the same interface as the aggregators_net repository
@@ -98,47 +102,13 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
    * @returns Transaction result
    */
   public async submitCommitment(
-    requestID: bigint | string | Uint8Array,
-    payload: Uint8Array | string,
-    authenticator: Uint8Array | string,
+    requestID: RequestId,
+    payload: Uint8Array,
+    authenticator: Authenticator,
   ): Promise<TransactionResult> {
-    // Convert requestID to bytes format
-    let requestIdBytes: Uint8Array;
-    
-    if (requestID instanceof Uint8Array) {
-      // Already in bytes format
-      requestIdBytes = requestID;
-    } else if (typeof requestID === 'string') {
-      // If it's a string that looks like a hex value, convert directly from hex
-      if (requestID.startsWith('0x')) {
-        try {
-          requestIdBytes = hexToBytes(requestID);
-          console.log(`Converted hex requestID to bytes: ${bytesToHex(requestIdBytes)}`);
-        } catch (e: any) {
-          console.log(`Failed to convert hex requestID, falling back to text encoding: ${e.message}`);
-          requestIdBytes = new TextEncoder().encode(requestID);
-        }
-      } else {
-        // Regular string, use text encoder
-        requestIdBytes = new TextEncoder().encode(requestID);
-      }
-    } else if (typeof requestID === 'bigint') {
-      // Convert BigInt to hex string and then to bytes
-      const hexString = '0x' + requestID.toString(16);
-      requestIdBytes = hexToBytes(hexString);
-      console.log(`Converted BigInt requestID to bytes: ${bytesToHex(requestIdBytes)}`);
-    } else {
-      throw new Error(`Unsupported requestID type: ${typeof requestID}`);
-    }
-
-    // Convert string payloads to Uint8Array if needed
-    const payloadBytes = typeof payload === 'string' ? new TextEncoder().encode(payload) : payload;
-
-    const authBytes =
-      typeof authenticator === 'string' ? new TextEncoder().encode(authenticator) : authenticator;
-
-    console.log(`Submitting commitment with requestID bytes: ${bytesToHex(requestIdBytes)}`);
-    return this.executeTransaction('submitCommitment', [requestIdBytes, payloadBytes, authBytes]);
+    const requestIdHex = requestID.toDto();
+    console.log(`Submitting commitment with requestID hex: ${requestIdHex}`);
+    return this.executeTransaction('submitCommitment', [hexToBytes(requestIdHex), payload, jsonToUint8Array(authenticator.toDto())]);
   }
 
   /**
@@ -188,12 +158,12 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
    * @returns The created batch number and transaction result
    */
   public async createBatchForRequestsWithNumber(
-    requestIDs: (bigint | string)[],
-    explicitBatchNumber: bigint | string,
+    requestIDs: (RequestId)[],
+    explicitBatchNumber: bigint,
   ): Promise<{ batchNumber: bigint; result: TransactionResult }> {
     // Convert string IDs to BigInt
-    const ids = requestIDs.map((id) => (typeof id === 'string' ? BigInt(id) : id));
-    const batchNum = typeof explicitBatchNumber === 'string' ? BigInt(explicitBatchNumber) : explicitBatchNumber;
+    const ids = requestIDs;
+    const batchNum = explicitBatchNumber;
 
     const result = await this.executeTransaction('createBatchForRequestsWithNumber', [ids, batchNum]);
 

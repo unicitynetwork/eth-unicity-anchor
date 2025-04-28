@@ -33,7 +33,7 @@
   },
   "dependencies": {
     "@openzeppelin/merkle-tree": "^1.0.5",
-    "@unicitylabs/commons": "^2.1.0",
+    "@unicitylabs/commons": "^2.2.0-rc.22aec00",
     "axios": "^1.8.4",
     "ethers": "^6.8.1",
     "typechain": "^8.3.2"

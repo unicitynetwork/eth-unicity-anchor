@@ -20,6 +20,9 @@ import { AggregatorGatewayClient } from './aggregator-gateway';
 import { AggregatorNodeClient } from './aggregator-node';
 import { SubmitCommitmentStatus } from './aggregator-gateway';
 import { CommitmentRequestDto } from './types';
+import { RequestId } from '@unicitylabs/commons/lib/api/RequestId.js';
+import { DataHash } from '@unicitylabs/commons/lib/hash/DataHash.js';
+import { Authenticator } from '@unicitylabs/commons/lib/api/Authenticator.js';
 
 // Extract command-line arguments
 const port = parseInt(process.env.GATEWAY_PORT || process.argv[2] || '3000');
@@ -214,43 +217,31 @@ function createHttpServer(client: AggregatorGatewayClient): http.Server {
               return;
             }
             
-            // Get the requestId from the parameters
-            const requestId = params.requestId;
-            console.log(`Generating inclusion proof for requestId: ${requestId}`);
-            
-            // Convert requestId to bytes format suitable for SMT lookup
-            let requestIdBytes: Uint8Array;
+            // Get the requestId from the parameters and convert to RequestId object
+            let requestIdObj: RequestId;
             try {
-              if (typeof requestId === 'string') {
-                // If it has 0x prefix, assume it's a hex string and convert
-                if (requestId.startsWith('0x')) {
-                  requestIdBytes = Buffer.from(requestId.slice(2), 'hex');
-                } else {
-                  // Assume it's a hex string without prefix
-                  requestIdBytes = Buffer.from(requestId, 'hex');
-                }
-              } else if (requestId instanceof Uint8Array || requestId instanceof Buffer) {
-                requestIdBytes = requestId;
+              // Parse the requestId from the request
+              if (typeof params.requestId === 'string') {
+                requestIdObj = RequestId.fromDto(params.requestId);
               } else {
-                throw new Error(`Unsupported requestId type: ${typeof requestId}`);
+                throw new Error(`Unsupported requestId type: ${typeof params.requestId}`);
               }
               
-              const requestIdHex = Buffer.from(requestIdBytes).toString('hex');
-              console.log(`Request ID as hex: ${requestIdHex.substring(0, 20)}...`);
+              console.log(`Generating inclusion proof for requestId: ${requestIdObj.toDto()}`);
             } catch (e: any) {
-              console.error(`Error converting requestId to bytes: ${e.message}`);
+              console.error(`Error converting requestId to RequestId object: ${e.message}`);
               sendResponse(null, { 
                 code: -32602, 
-                message: 'Invalid requestId format - cannot convert to bytes' 
+                message: 'Invalid requestId format - cannot convert to RequestId object' 
               });
               return;
             }
             
             // Get the inclusion proof directly from the SMT
-            const proof = await nodeClient.getInclusionProof(requestIdBytes);
+            const proof = await nodeClient.getInclusionProof(requestIdObj);
             
             if (!proof) {
-              console.log(`Failed to generate proof for requestId ${requestId}`);
+              console.log(`Failed to generate proof for requestId ${requestIdObj.toDto()}`);
               sendResponse(null, { 
                 code: -32001, 
                 message: 'Failed to generate inclusion proof' 
@@ -258,12 +249,9 @@ function createHttpServer(client: AggregatorGatewayClient): http.Server {
               return;
             }
             
-            // Convert the proof to the expected response format
-            const merkleTreePathDto = proof.toDto();
-            
             // Check if we have the original data (authenticator and transactionHash)
             if (!proof.leafData) {
-              console.log(`No original data found for requestId ${requestId}`);
+              console.log(`No original data found for requestId ${requestIdObj.toDto()}`);
               sendResponse(null, { 
                 code: -32001, 
                 message: 'Inclusion proof without original data is not supported' 
@@ -275,14 +263,13 @@ function createHttpServer(client: AggregatorGatewayClient): http.Server {
             console.log('Proof structure:', JSON.stringify(proof, (_, v) => typeof v === "bigint" ? v.toString() : v, 2));
             
             // Construct the complete response with merkle path and original data
-            // Format the merkleTreePath according to the expected structure
             const response = {
               authenticator: proof.leafData.authenticator,
               transactionHash: proof.leafData.transactionHash,
               merkleTreePath: proof.toDto() // Use the built-in serialization
             };
             
-            console.log(`Returning complete inclusion proof for requestId ${requestId}`);
+            console.log(`Returning complete inclusion proof for requestId ${requestIdObj.toDto()}`);
             sendResponse(response);
           } catch (error: any) {
             console.error(`Error getting inclusion proof: ${error.message}`);

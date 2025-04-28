@@ -2,20 +2,24 @@
  * Core data types for the Ethereum Unicity Anchor client
  */
 
+import { DataHash } from '@unicitylabs/commons/lib/hash/DataHash.js';
+import { RequestId } from '@unicitylabs/commons/lib/api/RequestId.js';
+import { Authenticator } from '@unicitylabs/commons/lib/api/Authenticator.js';
+
 /**
  * Represents a commitment request
  */
 export interface CommitmentRequest {
-  requestID: bigint;
+  requestID: RequestId;
   payload: Uint8Array;
-  authenticator: Uint8Array;
+  authenticator: Authenticator;
 }
 
 /**
  * Commitment request with string representation for easier handling
  */
 export interface CommitmentRequestDto {
-  requestID: string;
+  requestID: string; // hex string
   payload: string; // hex string
   authenticator: string; // hex string
 }
@@ -23,19 +27,19 @@ export interface CommitmentRequestDto {
 /**
  * Batch request interface for processing
  */
-export interface BatchRequest {
-  requestID: string;
-  payload: string; // hex string
-  authenticator: string; // hex string
-}
+/*export interface BatchRequest {
+  requestID: RequestId;
+  payload: Uint8Array; // hex string
+  authenticator: Authenticator; // hex string
+}*/
 
 /**
  * Represents a batch of commitment requests
  */
 export interface Batch {
   batchNumber: bigint;
-  requestIds: bigint[];
-  hashroot: Uint8Array;
+  requestIds: RequestId[];
+  hashroot: DataHash;
   processed: boolean;
 }
 
@@ -70,7 +74,6 @@ export interface ClientOptions {
  */
 export interface AggregatorConfig extends ClientOptions {
   aggregatorAddress: string;
-  smtDepth: number;
   /**
    * @deprecated Use autoProcessing instead
    */
@@ -143,14 +146,6 @@ export interface TransactionResult {
   waitForPrevious?: boolean;
 }
 
-/**
- * Sparse Merkle Tree node interface
- */
-export interface SmtNode {
-  hash: Uint8Array;
-  left?: SmtNode;
-  right?: SmtNode;
-}
 
 /**
  * Events emitted by the contract

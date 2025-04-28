@@ -133,7 +133,7 @@ async function getInclusionProof(gateway: string, requestId: string, origRequest
       // Track if we applied a fix
       let fixApplied = false;
 
-      console.log(`- RequestId: ${proofData.requestId}`);
+      console.log(`- RequestId: ${requestId}`);
       console.log(`- Transaction Hash: ${proofData.transactionHash}`);
       if (proofData.merkleTreePath) {
         console.log(`- Merkle Tree Root: ${proofData.merkleTreePath.root}`);
@@ -196,7 +196,7 @@ async function getInclusionProof(gateway: string, requestId: string, origRequest
           pathVerification = {
             isPathValid: pathVerification.isPathValid === true,
             isPathIncluded: pathVerification.isPathIncluded === true,
-            isLeafValueValid: Buffer.from(leafValue.imprint).toString('hex') === Buffer.from(proof.merkleTreePath.steps.at(-1)?.value ?? new Uint8Array()).toString('hex')
+            isLeafValueValid: Buffer.from(leafValue.imprint).toString('hex') === Buffer.from(proof.merkleTreePath.steps.at(0).value).toString('hex')
           };
 
         } catch (pathError) {
