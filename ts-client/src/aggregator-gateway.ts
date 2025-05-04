@@ -11,14 +11,23 @@ import {
   BatchDto,
 } from './types';
 import { bytesToHex, hexToBytes, convertDtoToCommitment } from './utils';
-import { RequestId } from './gateway-types/RequestId';
-import { DataHash } from './gateway-types/DataHash';
-import { Authenticator } from './gateway-types/Authenticator';
-import { Commitment } from './gateway-types/Commitment';
-import { InclusionProof } from './gateway-types/InclusionProof';
+import { RequestId } from '@unicitylabs/commons/lib/api/RequestId.js';
+import { DataHash } from '@unicitylabs/commons/lib/hash/DataHash.js';
+import { Authenticator } from '@unicitylabs/commons/lib/api/Authenticator.js';
+import { InclusionProof } from '@unicitylabs/commons/lib/api/InclusionProof.js';
+import { Transaction } from '@unicitylabs/commons/lib/api/Transaction.js';
 import crypto from 'crypto';
 import { SparseMerkleTree } from '@unicitylabs/commons/lib/smt/SparseMerkleTree.js';
 import { HashAlgorithm } from '@unicitylabs/commons/lib/hash/HashAlgorithm.js';
+
+// Define a local Commitment class that implements CommitmentRequest
+class Commitment implements CommitmentRequest {
+  constructor(
+    public requestID: RequestId,
+    public payload: Uint8Array,
+    public authenticator: Authenticator
+  ) {}
+}
 
 /**
  * Authentication method for submitters
@@ -108,7 +117,7 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
   ): Promise<TransactionResult> {
     const requestIdHex = requestID.toDto();
     console.log(`Submitting commitment with requestID hex: ${requestIdHex}`);
-    return this.executeTransaction('submitCommitment', [hexToBytes(requestIdHex), payload, jsonToUint8Array(authenticator.toDto())]);
+    return this.executeTransaction('submitCommitment', [hexToBytes(requestIdHex), payload, authenticator.encode()]);
   }
 
   /**
@@ -121,15 +130,8 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
     const nextAutoNumberedBatch = await this.getNextAutoNumberedBatch();
     
     const result = await this.executeTransaction('createBatch', []);
-    
-    // If the transaction was successful, return the next auto-numbered batch
-    // that we retrieved before the transaction, as this is the batch that was created
-    if (result.success) {
-      return { batchNumber: nextAutoNumberedBatch, result };
-    } else {
-      // If the transaction failed, return 0 as the batch number
-      return { batchNumber: BigInt(0), result };
-    }
+    const batchNumber = await this.getLatestBatchNumber();
+    return { batchNumber, result };
   }
 
   /**
@@ -138,10 +140,10 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
    * @returns The created batch number and transaction result
    */
   public async createBatchForRequests(
-    requestIDs: (bigint | string)[],
+    requestIDs: RequestId[],
   ): Promise<{ batchNumber: bigint; result: TransactionResult }> {
     // Convert string IDs to BigInt
-    const ids = requestIDs.map((id) => (typeof id === 'string' ? BigInt(id) : id));
+    const ids = requestIDs.map((id) => (hexToBytes(id.toDto())));
 
     const result = await this.executeTransaction('createBatchForRequests', [ids]);
 
@@ -158,7 +160,7 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
    * @returns The created batch number and transaction result
    */
   public async createBatchForRequestsWithNumber(
-    requestIDs: (RequestId)[],
+    requestIDs: RequestId[],
     explicitBatchNumber: bigint,
   ): Promise<{ batchNumber: bigint; result: TransactionResult }> {
     // Convert string IDs to BigInt
@@ -185,46 +187,12 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
         // Check if there are enough unprocessed requests to create a batch
         const unprocessedCount = await this.getUnprocessedRequestCount();
 
-        if (unprocessedCount >= BigInt(this.batchCreationThreshold)) {
-          console.log(`Creating batch with ${unprocessedCount} unprocessed requests`);
-          await this.createBatch();
-        } else {
-          console.log(
-            `Not enough unprocessed requests (${unprocessedCount}) to create a batch (threshold: ${this.batchCreationThreshold})`,
-          );
-        }
+        console.log(`Creating batch with ${unprocessedCount} unprocessed requests`);
+        await this.createBatch();
       } catch (error) {
         console.error('Error in auto batch creation:', error);
       }
     }, this.batchCreationInterval);
-
-    // Also listen for new commitment requests to create batches when threshold is reached
-    this.on(EventType.RequestSubmitted, async () => {
-      try {
-        const unprocessedCount = await this.getUnprocessedRequestCount();
-
-        if (unprocessedCount >= BigInt(this.batchCreationThreshold)) {
-          console.log(`Threshold reached (${unprocessedCount} requests). Creating new batch.`);
-          await this.createBatch();
-        }
-      } catch (error) {
-        console.error('Error in request threshold batch creation:', error);
-      }
-    });
-    
-    // Listen for bulk commitment submissions and create batches if needed
-    this.on(EventType.RequestsSubmitted, async (_, data: { count: bigint, successCount: bigint }) => {
-      try {
-        const unprocessedCount = await this.getUnprocessedRequestCount();
-        
-        if (unprocessedCount >= BigInt(this.batchCreationThreshold)) {
-          console.log(`Threshold reached (${unprocessedCount} requests) after bulk submission. Creating new batch.`);
-          await this.createBatch();
-        }
-      } catch (error) {
-        console.error('Error in bulk submission batch creation:', error);
-      }
-    });
   }
 
   /**
@@ -244,10 +212,7 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
    * @returns Boolean indicating if the request is valid
    */
   public validateCommitment(request: CommitmentRequest): boolean {
-    // Basic validation:
-    // - Request ID must be positive
-    // - Payload and authenticator must not be empty
-    if (request.requestID <= 0) {
+    if (!request.requestID) {
       return false;
     }
 
@@ -255,9 +220,11 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
       return false;
     }
 
-    if (!request.authenticator || request.authenticator.length === 0) {
+    if (!(await request?.authenticator?.verify(request.payload))) {
       return false;
     }
+
+    if(!request)
 
     return true;
   }
@@ -416,10 +383,10 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
    */
   public async submitMultipleCommitments(
     requests: CommitmentRequest[],
-  ): Promise<{ requestID: bigint; result: TransactionResult }[]> {
+  ): Promise<{ requestID: RequestId; result: TransactionResult }[]> {
     console.warn('submitMultipleCommitments is deprecated. Use submitCommitments for better gas efficiency.');
     
-    const results: { requestID: bigint; result: TransactionResult }[] = [];
+    const results: { requestID: RequestId; result: TransactionResult }[] = [];
 
     for (const request of requests) {
       if (this.validateCommitment(request)) {
@@ -761,9 +728,9 @@ export class AggregatorGateway extends UniCityAnchorClient {
 
       // Convert commitments to contract format for submitAndCreateBatchWithNumber
       const contractRequests = commitments.map(commitment => ({
-        requestID: commitment.requestId.toBigInt(),
-        payload: commitment.transactionHash.toBuffer(),
-        authenticator: commitment.authenticator.toBuffer()
+        requestID: commitment.requestID,
+        payload: commitment.payload,
+        authenticator: commitment.authenticator
       }));
 
       const batchNum = typeof explicitBatchNumber === 'string' ? BigInt(explicitBatchNumber) : explicitBatchNumber;
@@ -848,9 +815,9 @@ export class AggregatorGateway extends UniCityAnchorClient {
 
       // Process all commitments
       for (const commitment of this.pendingCommitments) {
-        const key = commitment.requestId.toString();
+        const key = commitment.requestID.toDto();
         const value = bytesToHex(Buffer.concat([
-          commitment.transactionHash.toBuffer(),
+          commitment.payload,
           commitment.authenticator.toBuffer()
         ]));
         leaves.push([key, value]);
@@ -892,7 +859,7 @@ export class AggregatorGateway extends UniCityAnchorClient {
       
       // Create request IDs array
       const requestIds = this.pendingCommitments.map(commitment => 
-        commitment.requestId.toBigInt());
+        commitment.requestID);
       
       // Submit the batch to the blockchain using direct method calls
       // First, create a batch normally
@@ -1116,13 +1083,13 @@ export class AggregatorGateway extends UniCityAnchorClient {
     try {
       // First check our pending commitments
       const pendingCommitment = this.pendingCommitments.find(c => 
-        c.requestId.toString() === requestId.toString());
+        c.requestID.toDto() === requestId.toDto());
       
       if (pendingCommitment) {
         // This is a pending commitment - get its batch info from storage
         return {
           batchNumber: BigInt(0), // A placeholder for pending commitments
-          transactionHash: pendingCommitment.transactionHash,
+          transactionHash: pendingCommitment.payload,
           authenticator: pendingCommitment.authenticator
         };
       }
@@ -1130,10 +1097,9 @@ export class AggregatorGateway extends UniCityAnchorClient {
       // If not in pending commitments, check on-chain
       // Call contract method to get commitment record
       // This is a simplified example - you'll need to implement based on your contract
-      const requestIdBigInt = requestId.toBigInt();
       
       // Call contract to get the batch number for this request ID
-      const batchNumber = await this.contract.getRequestBatch(requestIdBigInt);
+      const batchNumber = await this.contract.getRequestBatch(requestId);
       
       if (batchNumber === BigInt(0)) {
         // Request not found
@@ -1186,7 +1152,7 @@ export class AggregatorGateway extends UniCityAnchorClient {
         authenticator.stateHash
       );
       
-      if (!expectedRequestId.equals(requestId)) {
+      if (expectedRequestId.toDto() !== requestId.toDto()) {
         return SubmitCommitmentStatus.REQUEST_ID_MISMATCH;
       }
       
@@ -1197,8 +1163,13 @@ export class AggregatorGateway extends UniCityAnchorClient {
       
       // Check if request ID already exists with different transaction hash
       const existingRecord = await this.getCommitmentRecord(requestId);
-      if (existingRecord && !existingRecord.transactionHash.equals(transactionHash)) {
-        return SubmitCommitmentStatus.REQUEST_ID_EXISTS;
+      // Compare transaction hashes - if they're different, reject
+      if (existingRecord) {
+        const existingTxHashStr = Buffer.from(existingRecord.transactionHash).toString('hex');
+        const newTxHashStr = Buffer.from(transactionHash).toString('hex');
+        if (existingTxHashStr !== newTxHashStr) {
+          return SubmitCommitmentStatus.REQUEST_ID_EXISTS;
+        }
       }
       
       return SubmitCommitmentStatus.SUCCESS;

@@ -65,7 +65,6 @@ const nodeClient = new AggregatorNodeClient({
   provider,
   signer: wallet,
   aggregatorAddress: wallet.address,
-  smtDepth: 16, // Standard depth sufficient for all test cases  
   // Disable automatic batch processing 
   autoProcessing: 0 // Set to 0 to turn off automatic processing
 });
@@ -157,10 +156,21 @@ function createHttpServer(client: AggregatorGatewayClient): http.Server {
 - Authenticator: ${JSON.stringify(params.authenticator, null, 2)}
 `);
             
+            // Use the fromDto method to properly parse the authenticator
+            const authenticator = Authenticator.fromDto(params.authenticator);
+            
+            // Convert requestId to RequestId object
+            const requestId = RequestId.fromDto(params.requestId);
+            
+            // Convert transaction hash to Uint8Array (assuming it's a hex string)
+            const txHash = typeof params.transactionHash === 'string' 
+              ? new TextEncoder().encode(params.transactionHash)
+              : params.transactionHash;
+            
             const result = await client.submitCommitment(
-              params.requestId,
-              params.transactionHash,
-              JSON.stringify(params.authenticator)
+              requestId,
+              txHash,
+              authenticator
             );
             
             // Using the safeStringify helper defined at the top level

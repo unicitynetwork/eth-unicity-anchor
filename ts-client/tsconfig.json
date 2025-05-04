@@ -1,8 +1,9 @@
 {
   "compilerOptions": {
-    "target": "es2020",
+    "target": "es2022", // Updated target
+    "lib": ["es2022", "dom"], // Explicitly add libs
     "module": "commonjs",
-    "moduleResolution": "node",
+    "moduleResolution": "NodeNext", // Updated moduleResolution
     "declaration": true,
     "outDir": "./dist",
     "strict": true,
