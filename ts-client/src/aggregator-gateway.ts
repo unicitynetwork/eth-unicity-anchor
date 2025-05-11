@@ -285,14 +285,14 @@ export class AggregatorGatewayClient extends UnicityAnchorClient {
   }
 
   /**
-   * Submit multiple commitments in a single transaction
-   * @param requests Array of commitment requests to submit
-   * @returns Transaction result with success count
+   * Filter and validate an array of commitment requests
+   * @param requests Array of commitment requests to validate
+   * @returns Array of valid commitment requests
    */
-  public async submitCommitments(
-    requests: CommitmentRequest[],
-  ): Promise<{ successCount: bigint; result: TransactionResult }> {
-    // Validate all requests first
+  private async filterValidCommitments(
+    requests: CommitmentRequest[]
+  ): Promise<CommitmentRequest[]> {
+    // Validate all requests
     const validRequests = [];
     for (const request of requests) {
       if (await this.validateCommitment(request)) {
@@ -300,6 +300,21 @@ export class AggregatorGatewayClient extends UnicityAnchorClient {
       }
     }
     
+    return validRequests;
+  }
+
+  /**
+   * Submit multiple commitments in a single transaction
+   * @param requests Array of commitment requests to submit
+   * @returns Transaction result with success count
+   */
+  public async submitCommitments(
+    requests: CommitmentRequest[],
+  ): Promise<{ successCount: bigint; result: TransactionResult }> {
+    // Filter and validate requests
+    const validRequests = await this.filterValidCommitments(requests);
+    
+    // Check if there are any valid requests
     if (validRequests.length === 0) {
       return {
         successCount: BigInt(0),
@@ -330,14 +345,10 @@ export class AggregatorGatewayClient extends UnicityAnchorClient {
   public async submitAndCreateBatch(
     requests: CommitmentRequest[],
   ): Promise<{ batchNumber: bigint; successCount: bigint; result: TransactionResult }> {
-    // Validate all requests first
-    const validRequests = [];
-    for (const request of requests) {
-      if (await this.validateCommitment(request)) {
-        validRequests.push(request);
-      }
-    }
+    // Filter and validate requests
+    const validRequests = await this.filterValidCommitments(requests);
     
+    // Check if there are any valid requests
     if (validRequests.length === 0) {
       return {
         batchNumber: BigInt(0),
@@ -379,14 +390,10 @@ export class AggregatorGatewayClient extends UnicityAnchorClient {
     requests: CommitmentRequest[],
     explicitBatchNumber: bigint,
   ): Promise<{ batchNumber: bigint; successCount: bigint; result: TransactionResult }> {
-    // Validate all requests first
-    const validRequests = [];
-    for (const request of requests) {
-      if (await this.validateCommitment(request)) {
-        validRequests.push(request);
-      }
-    }
+    // Filter and validate requests
+    const validRequests = await this.filterValidCommitments(requests);
     
+    // Check if there are any valid requests
     if (validRequests.length === 0) {
       return {
         batchNumber: BigInt(0),
