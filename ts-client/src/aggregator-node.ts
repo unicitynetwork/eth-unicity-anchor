@@ -1,4 +1,4 @@
-import { UniCityAnchorClient } from './client';
+import { UnicityAnchorClient } from './client';
 import {
   AggregatorConfig,
   CommitmentRequest,
@@ -20,7 +20,7 @@ import { bytesToHex, hexToBytes } from './utils';
  * Client for aggregator node operations
  * Handles batch processing and hashroot submissions
  */
-export class AggregatorNodeClient extends UniCityAnchorClient {
+export class AggregatorNodeClient extends UnicityAnchorClient {
   // Changed from private to protected to allow access in derived classes
   protected readonly aggregatorAddress: string;
   private readonly smtDepth: number;

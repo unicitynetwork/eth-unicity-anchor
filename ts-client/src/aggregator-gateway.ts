@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import { UniCityAnchorClient } from './client';
+import { UnicityAnchorClient } from './client';
 import {
   ClientOptions,
   GatewayConfig,
@@ -9,6 +9,7 @@ import {
   EventType,
   Batch,
   BatchDto,
+  AggregatorConfig,
 } from './types';
 import { bytesToHex, hexToBytes, convertDtoToCommitment } from './utils';
 import { RequestId } from '@unicitylabs/commons/lib/api/RequestId.js';
@@ -16,9 +17,9 @@ import { DataHash } from '@unicitylabs/commons/lib/hash/DataHash.js';
 import { Authenticator } from '@unicitylabs/commons/lib/api/Authenticator.js';
 import { InclusionProof } from '@unicitylabs/commons/lib/api/InclusionProof.js';
 import { Transaction } from '@unicitylabs/commons/lib/api/Transaction.js';
-import crypto from 'crypto';
 import { SparseMerkleTree } from '@unicitylabs/commons/lib/smt/SparseMerkleTree.js';
 import { HashAlgorithm } from '@unicitylabs/commons/lib/hash/HashAlgorithm.js';
+import { DataHasher } from '@unicitylabs/commons/lib/hash/DataHasher.js';
 
 // Define a local Commitment class that implements CommitmentRequest
 class Commitment implements CommitmentRequest {
@@ -42,7 +43,7 @@ export enum AuthMethod {
  * Extended configuration for the gateway with authentication settings
  */
 export interface AuthenticatedGatewayConfig extends GatewayConfig {
-  authMethod: AuthMethod;
+  authMethod?: AuthMethod;
   jwtSecret?: string;
   apiKeys?: Record<string, { 
     name: string;
@@ -50,6 +51,8 @@ export interface AuthenticatedGatewayConfig extends GatewayConfig {
     permissions: string[];
   }>;
   trustedSigners?: string[]; // List of trusted Ethereum addresses
+  smtDepth?: number; // SMT tree depth
+  autoProcessing?: number; // Auto processing interval in seconds
 }
 
 /**
@@ -75,31 +78,81 @@ export interface BatchSubmissionDto {
   jwt?: string;       // JWT token for authentication
 }
 
-// Intermin solution for JSON encodding into byte array
-const jsonToUint8Array = (jsonInput: string | object): Uint8Array => new TextEncoder().encode(typeof jsonInput === 'string' ? JSON.stringify(JSON.parse(jsonInput)) : JSON.stringify(jsonInput));
-const uint8ArrayToJsonObject = (uint8Array: Uint8Array): any => JSON.parse(new TextDecoder().decode(uint8Array));
-
 /**
- * Aggregator Gateway client
- * Implements the same interface as the aggregators_net repository
- * with added methods for batch operations and authentication
+ * Unified Aggregator Gateway client
+ * Implements commitment and batch submission to the smart contract
+ * and includes SMT functionality for inclusion proof generation
  */
-// Original AggregatorGatewayClient implementation (kept for backward compatibility)
-export class AggregatorGatewayClient extends UniCityAnchorClient {
+export class AggregatorGatewayClient extends UnicityAnchorClient {
   private readonly gatewayAddress: string;
   private readonly batchCreationThreshold: number;
   private readonly batchCreationInterval: number;
   private batchCreationTimer?: NodeJS.Timeout;
+  
+  // Authentication properties
+  private readonly authMethod?: AuthMethod;
+  private readonly jwtSecret?: string;
+  private readonly apiKeys?: Record<string, { name: string; role: string; permissions: string[] }>;
+  private readonly trustedSigners?: string[];
+  
+  // SMT properties
+  private readonly smtDepth: number;
+  private smt: SparseMerkleTree | null = null;
+  private processedBatches: Set<bigint> = new Set();
+  private processedRequestIds: Set<string> = new Set();
+  private requestDataMap: Map<string, { authenticator: Authenticator, transactionHash: DataHash }> = new Map();
+  private lastFullyVerifiedBatch: bigint = 0n;
+  
+  // Batch processing properties
+  private batchProcessingInterval: number;
+  private batchProcessingTimer?: NodeJS.Timeout;
+  private isProcessingBatch = false;
 
-  constructor(config: GatewayConfig) {
+  constructor(config: AuthenticatedGatewayConfig) {
     super(config);
     this.gatewayAddress = config.gatewayAddress;
     this.batchCreationThreshold = config.batchCreationThreshold || 50;
     this.batchCreationInterval = config.batchCreationInterval || 5 * 60 * 1000; // 5 minutes default
+    
+    // Authentication setup
+    this.authMethod = config.authMethod;
+    this.jwtSecret = config.jwtSecret;
+    this.apiKeys = config.apiKeys;
+    this.trustedSigners = config.trustedSigners;
+    
+    // SMT setup
+    this.smtDepth = config.smtDepth || 32;
+    
+    // Support both the new autoProcessing parameter and backward compatibility
+    let autoProcessingEnabled = false;
+    if (typeof config.autoProcessing === 'number') {
+      // New style: autoProcessing in seconds
+      this.batchProcessingInterval = config.autoProcessing > 0 ? config.autoProcessing * 1000 : 0;
+      autoProcessingEnabled = this.batchProcessingInterval > 0;
+    } else {
+      // Legacy style
+      this.batchProcessingInterval = config.batchProcessingInterval || 5 * 60 * 1000; // 5 minutes default
+      autoProcessingEnabled = !!config.autoProcessBatches;
+    }
 
     // Start automatic batch creation if enabled
     if (config.autoCreateBatches) {
       this.startAutoBatchCreation();
+    }
+    
+    // If batch processing is enabled, catch up with the on-chain state
+    if (autoProcessingEnabled) {
+      // Run this in the background to avoid blocking constructor
+      setTimeout(() => {
+        this.syncWithOnChainState().then(() => {
+          // Start automatic batch processing after sync
+          this.startAutoBatchProcessing();
+        }).catch(error => {
+          console.error('Error syncing with on-chain state:', error);
+          // Still start batch processing even if sync fails
+          this.startAutoBatchProcessing();
+        });
+      }, 0);
     }
   }
 
@@ -125,10 +178,6 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
    * @returns The created batch number and transaction result
    */
   public async createBatch(): Promise<{ batchNumber: bigint; result: TransactionResult }> {
-    // Get the next auto-numbered batch before creating the batch
-    // This is the batch number that will be used to fill the gap
-    const nextAutoNumberedBatch = await this.getNextAutoNumberedBatch();
-    
     const result = await this.executeTransaction('createBatch', []);
     const batchNumber = await this.getLatestBatchNumber();
     return { batchNumber, result };
@@ -211,7 +260,7 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
    * @param request The commitment request to validate
    * @returns Boolean indicating if the request is valid
    */
-  public validateCommitment(request: CommitmentRequest): boolean {
+  public async validateCommitment(request: CommitmentRequest): Promise<boolean> {
     if (!request.requestID) {
       return false;
     }
@@ -220,11 +269,17 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
       return false;
     }
 
-    if (!(await request?.authenticator?.verify(request.payload))) {
+    if (!(await request.authenticator?.verify(request.payload))) {
       return false;
     }
 
-    if(!request)
+    // Get requestId from authenticator for comparison
+    const calculatedRequestId = await request.authenticator.calculateRequestId();
+    
+    // Compare with the provided requestId
+    if (!request.requestID.equals(calculatedRequestId)) {
+      return false;
+    }
 
     return true;
   }
@@ -238,7 +293,12 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
     requests: CommitmentRequest[],
   ): Promise<{ successCount: bigint; result: TransactionResult }> {
     // Validate all requests first
-    const validRequests = requests.filter(request => this.validateCommitment(request));
+    const validRequests = [];
+    for (const request of requests) {
+      if (await this.validateCommitment(request)) {
+        validRequests.push(request);
+      }
+    }
     
     if (validRequests.length === 0) {
       return {
@@ -249,17 +309,9 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
         }
       };
     }
-    
-    // Convert to contract format
-    const contractRequests = validRequests.map(request => ({
-      requestID: typeof request.requestID === 'string' ? BigInt(request.requestID) : request.requestID,
-      payload: typeof request.payload === 'string' ? new TextEncoder().encode(request.payload) : request.payload,
-      authenticator: typeof request.authenticator === 'string' ? 
-        new TextEncoder().encode(request.authenticator) : request.authenticator
-    }));
-    
+
     // Execute the transaction
-    const result = await this.executeTransaction('submitCommitments', [contractRequests]);
+    const result = await this.executeTransaction('submitCommitments', [validRequests]);
     
     // Get the success count from the transaction result
     // The executeTransaction method now extracts this from the RequestsSubmitted event
@@ -279,7 +331,12 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
     requests: CommitmentRequest[],
   ): Promise<{ batchNumber: bigint; successCount: bigint; result: TransactionResult }> {
     // Validate all requests first
-    const validRequests = requests.filter(request => this.validateCommitment(request));
+    const validRequests = [];
+    for (const request of requests) {
+      if (await this.validateCommitment(request)) {
+        validRequests.push(request);
+      }
+    }
     
     if (validRequests.length === 0) {
       return {
@@ -292,16 +349,8 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
       };
     }
     
-    // Convert to contract format
-    const contractRequests = validRequests.map(request => ({
-      requestID: typeof request.requestID === 'string' ? BigInt(request.requestID) : request.requestID,
-      payload: typeof request.payload === 'string' ? new TextEncoder().encode(request.payload) : request.payload,
-      authenticator: typeof request.authenticator === 'string' ? 
-        new TextEncoder().encode(request.authenticator) : request.authenticator
-    }));
-    
     // Execute the transaction
-    const result = await this.executeTransaction('submitAndCreateBatch', [contractRequests]);
+    const result = await this.executeTransaction('submitAndCreateBatch', [validRequests]);
     
     // Get the returned values from the transaction result
     // The executeTransaction method now extracts these from events emitted by the contract
@@ -328,10 +377,15 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
    */
   public async submitAndCreateBatchWithNumber(
     requests: CommitmentRequest[],
-    explicitBatchNumber: bigint | string,
+    explicitBatchNumber: bigint,
   ): Promise<{ batchNumber: bigint; successCount: bigint; result: TransactionResult }> {
     // Validate all requests first
-    const validRequests = requests.filter(request => this.validateCommitment(request));
+    const validRequests = [];
+    for (const request of requests) {
+      if (await this.validateCommitment(request)) {
+        validRequests.push(request);
+      }
+    }
     
     if (validRequests.length === 0) {
       return {
@@ -344,18 +398,10 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
       };
     }
     
-    // Convert to contract format
-    const contractRequests = validRequests.map(request => ({
-      requestID: typeof request.requestID === 'string' ? BigInt(request.requestID) : request.requestID,
-      payload: typeof request.payload === 'string' ? new TextEncoder().encode(request.payload) : request.payload,
-      authenticator: typeof request.authenticator === 'string' ? 
-        new TextEncoder().encode(request.authenticator) : request.authenticator
-    }));
-    
-    const batchNum = typeof explicitBatchNumber === 'string' ? BigInt(explicitBatchNumber) : explicitBatchNumber;
+    const batchNum = explicitBatchNumber;
     
     // Execute the transaction
-    const result = await this.executeTransaction('submitAndCreateBatchWithNumber', [contractRequests, batchNum]);
+    const result = await this.executeTransaction('submitAndCreateBatchWithNumber', [validRequests, batchNum]);
     
     // Get the returned values from the transaction result
     let batchNumber = BigInt(0);
@@ -374,808 +420,619 @@ export class AggregatorGatewayClient extends UniCityAnchorClient {
     
     return { batchNumber, successCount, result };
   }
-  
-  /**
-   * Process multiple commitment requests individually (legacy method)
-   * @param requests Array of commitment requests to submit
-   * @returns Array of results for each submission
-   * @deprecated Use submitCommitments instead for better gas efficiency
-   */
-  public async submitMultipleCommitments(
-    requests: CommitmentRequest[],
-  ): Promise<{ requestID: RequestId; result: TransactionResult }[]> {
-    console.warn('submitMultipleCommitments is deprecated. Use submitCommitments for better gas efficiency.');
-    
-    const results: { requestID: RequestId; result: TransactionResult }[] = [];
-
-    for (const request of requests) {
-      if (this.validateCommitment(request)) {
-        const result = await this.submitCommitment(
-          request.requestID,
-          request.payload,
-          request.authenticator,
-        );
-
-        results.push({ requestID: request.requestID, result });
-      } else {
-        results.push({
-          requestID: request.requestID,
-          result: {
-            success: false,
-            error: new Error('Invalid commitment request'),
-          },
-        });
-      }
-    }
-
-    return results;
-  }
-}
-
-// Enhanced AggregatorGateway implementation with the aggregators_net interface
-export class AggregatorGateway extends UniCityAnchorClient {
-  private readonly gatewayAddress: string;
-  private readonly batchCreationThreshold: number;
-  private readonly batchCreationInterval: number;
-  private batchCreationTimer?: NodeJS.Timeout;
-  private pendingCommitments: Commitment[] = [];
-  private readonly authMethod: AuthMethod;
-  private readonly jwtSecret?: string;
-  private readonly apiKeys?: Record<string, { name: string; role: string; permissions: string[] }>;
-  private readonly trustedSigners?: string[];
-  private smt: SparseMerkleTree | null = null;
-  
-  /**
-   * Create a new Aggregator Gateway client
-   * @param config Configuration for the gateway
-   */
-  constructor(config: AuthenticatedGatewayConfig) {
-    super(config);
-    this.gatewayAddress = config.gatewayAddress;
-    this.batchCreationThreshold = config.batchCreationThreshold || 100;
-    this.batchCreationInterval = config.batchCreationInterval || 60 * 1000; // Default to 1 minute
-    this.authMethod = config.authMethod || AuthMethod.API_KEY;
-    this.jwtSecret = config.jwtSecret;
-    this.apiKeys = config.apiKeys;
-    this.trustedSigners = config.trustedSigners;
-
-    // SMT will be initialized when needed
-    this.smt = null;
-
-    // Start automatic batch creation if enabled
-    if (config.autoCreateBatches) {
-      this.startAutoBatchCreation();
-    }
-  }
 
   /**
-   * Submit a single commitment
-   * Compatible with the aggregators_net interface
-   * @param request Commitment data with request ID, transaction hash and authenticator
-   * @param authToken Authentication token (optional, depending on auth method)
-   * @returns Response with status
-   */
-  public async submitCommitment(
-    request: { 
-      requestId: string; 
-      transactionHash: string; 
-      authenticator: { 
-        publicKey: string; 
-        stateHash: string; 
-        signature: string; 
-      } 
-    },
-    authToken?: string
-  ): Promise<{ status: SubmitCommitmentStatus }> {
-    // Authenticate if required
-    if (this.authMethod === AuthMethod.JWT && !this.authenticateJWT(authToken)) {
-      return { status: SubmitCommitmentStatus.AUTHENTICATION_FAILED };
-    }
-
-    try {
-      // Convert to internal types
-      const requestId = await RequestId.create(request.requestId);
-      const transactionHash = new DataHash(Buffer.from(request.transactionHash, 'hex'));
-      const authenticator = new Authenticator(
-        Buffer.from(request.authenticator.publicKey, 'hex'),
-        Buffer.from(request.authenticator.stateHash, 'hex'),
-        Buffer.from(request.authenticator.signature, 'hex')
-      );
-
-      // Validate the commitment
-      const validationResult = await this.validateCommitment(requestId, transactionHash, authenticator);
-      if (validationResult !== SubmitCommitmentStatus.SUCCESS) {
-        return { status: validationResult };
-      }
-
-      // Create and store the commitment
-      const commitment = new Commitment(requestId, transactionHash, authenticator);
-      
-      // Add to pending queue
-      this.pendingCommitments.push(commitment);
-
-      // Process immediately if threshold is reached
-      if (this.pendingCommitments.length >= this.batchCreationThreshold) {
-        await this.processPendingCommitments();
-      }
-
-      return { status: SubmitCommitmentStatus.SUCCESS };
-    } catch (error) {
-      console.error('Error submitting commitment:', error);
-      return { status: SubmitCommitmentStatus.INVALID_REQUEST };
-    }
-  }
-
-  /**
-   * NEW METHOD: Submit multiple commitments in a single call
-   * @param requests Array of commitment requests
-   * @param authData Authentication data (varies by auth method)
-   * @returns Response with status and counts
-   */
-  public async submitMultipleCommitments(
-    requests: { 
-      requestId: string; 
-      transactionHash: string; 
-      authenticator: { 
-        publicKey: string; 
-        stateHash: string; 
-        signature: string; 
-      } 
-    }[],
-    authData: { 
-      apiKey?: string; 
-      jwt?: string; 
-      signature?: { 
-        message: string; 
-        signature: string; 
-        signer: string; 
-      } 
-    }
-  ): Promise<{ 
-    status: SubmitCommitmentStatus; 
-    processedCount: number;
-    failedCount: number;
-    batchCreated: boolean;
-    batchNumber?: bigint;
-  }> {
-    // Authenticate based on the configured method
-    const isAuthenticated = await this.authenticate(authData);
-    if (!isAuthenticated) {
-      return { 
-        status: SubmitCommitmentStatus.AUTHENTICATION_FAILED,
-        processedCount: 0,
-        failedCount: requests.length,
-        batchCreated: false
-      };
-    }
-
-    try {
-      let processedCount = 0;
-      let failedCount = 0;
-
-      // Process each commitment request
-      for (const request of requests) {
-        // Convert to internal types
-        const requestId = await RequestId.create(request.requestId);
-        const transactionHash = new DataHash(Buffer.from(request.transactionHash, 'hex'));
-        const authenticator = new Authenticator(
-          Buffer.from(request.authenticator.publicKey, 'hex'),
-          Buffer.from(request.authenticator.stateHash, 'hex'),
-          Buffer.from(request.authenticator.signature, 'hex')
-        );
-
-        // Validate the commitment
-        const validationResult = await this.validateCommitment(requestId, transactionHash, authenticator);
-        if (validationResult === SubmitCommitmentStatus.SUCCESS) {
-          // Create and store the commitment
-          const commitment = new Commitment(requestId, transactionHash, authenticator);
-          this.pendingCommitments.push(commitment);
-          processedCount++;
-        } else {
-          failedCount++;
-        }
-      }
-
-      // Create a batch if we reached the threshold or processed all requests
-      let batchCreated = false;
-      let batchNumber: bigint | undefined;
-
-      if (this.pendingCommitments.length >= this.batchCreationThreshold) {
-        const result = await this.processPendingCommitments();
-        batchCreated = result.success;
-        batchNumber = result.batchNumber;
-      }
-
-      return {
-        status: processedCount > 0 ? SubmitCommitmentStatus.SUCCESS : SubmitCommitmentStatus.INVALID_REQUEST,
-        processedCount,
-        failedCount,
-        batchCreated,
-        batchNumber
-      };
-    } catch (error) {
-      console.error('Error submitting multiple commitments:', error);
-      return {
-        status: SubmitCommitmentStatus.INVALID_REQUEST,
-        processedCount: 0,
-        failedCount: requests.length,
-        batchCreated: false
-      };
-    }
-  }
-
-  /**
-   * NEW METHOD: Submit an entire batch directly
-   * @param batch The batch data with commitments
-   * @param authData Authentication data
+   * Process a batch by generating a hashroot and submitting it to the contract
+   * Uses a persistent SMT that accumulates all requests
+   * @param batchNumber The batch number to process
    * @returns Transaction result
    */
-  public async submitBatch(
-    batch: BatchSubmissionDto,
-    authData: { 
-      apiKey?: string; 
-      jwt?: string; 
-      signature?: { 
-        message: string; 
-        signature: string; 
-        signer: string; 
-      } 
-    }
-  ): Promise<TransactionResult> {
-    // Authenticate based on the configured method
-    const isAuthenticated = await this.authenticate(authData);
-    if (!isAuthenticated) {
-      return {
-        success: false,
-        error: new Error('Authentication failed'),
-        message: 'The provided authentication credentials are invalid',
-      };
-    }
-
+  public async processBatch(batchNumber: bigint): Promise<TransactionResult> {
     try {
-      // Convert all commitments to internal format
-      const commitments: Commitment[] = [];
-      
-      for (const commitmentDto of batch.commitments) {
-        // Convert from DTO to internal types
-        const requestId = await RequestId.create(commitmentDto.requestID);
-        const transactionHash = new DataHash(Buffer.from(hexToBytes(commitmentDto.payload)));
-        
-        // Extract authenticator parts from combined format
-        // This is a simplified approach - adapt based on your actual format
-        const authBytes = hexToBytes(commitmentDto.authenticator);
-        const publicKey = authBytes.slice(0, 32);
-        const stateHash = authBytes.slice(32, 64);
-        const signature = authBytes.slice(64);
-        
-        const authenticator = new Authenticator(
-          Buffer.from(publicKey),
-          Buffer.from(stateHash),
-          Buffer.from(signature)
-        );
-        
-        commitments.push(new Commitment(requestId, transactionHash, authenticator));
-      }
-
-      // Reset pending commitments and add the batch directly
-      this.pendingCommitments = [];
-      this.pendingCommitments.push(...commitments);
-
-      // Process the batch immediately
-      return await this.processPendingCommitments();
-    } catch (error: any) {
-      return {
-        success: false,
-        error: new Error(`Error submitting batch: ${error.message}`),
-        message: 'Failed to process the submitted batch',
-      };
-    }
-  }
-  
-  /**
-   * Submit batch with explicit batch number
-   * @param batch The batch data with commitments
-   * @param explicitBatchNumber The explicit batch number to use
-   * @param authData Authentication data
-   * @returns Transaction result
-   */
-  public async submitBatchWithNumber(
-    batch: BatchSubmissionDto,
-    explicitBatchNumber: bigint | string,
-    authData: { 
-      apiKey?: string; 
-      jwt?: string; 
-      signature?: { 
-        message: string; 
-        signature: string; 
-        signer: string; 
-      } 
-    }
-  ): Promise<TransactionResult> {
-    // Authenticate based on the configured method
-    const isAuthenticated = await this.authenticate(authData);
-    if (!isAuthenticated) {
-      return {
-        success: false,
-        error: new Error('Authentication failed'),
-        message: 'The provided authentication credentials are invalid',
-      };
-    }
-
-    try {
-      // Convert all commitments to internal format
-      const commitments: Commitment[] = [];
-      
-      for (const commitmentDto of batch.commitments) {
-        // Convert from DTO to internal types
-        const requestId = await RequestId.create(commitmentDto.requestID);
-        const transactionHash = new DataHash(Buffer.from(hexToBytes(commitmentDto.payload)));
-        
-        // Extract authenticator parts from combined format
-        const authBytes = hexToBytes(commitmentDto.authenticator);
-        const publicKey = authBytes.slice(0, 32);
-        const stateHash = authBytes.slice(32, 64);
-        const signature = authBytes.slice(64);
-        
-        const authenticator = new Authenticator(
-          Buffer.from(publicKey),
-          Buffer.from(stateHash),
-          Buffer.from(signature)
-        );
-        
-        commitments.push(new Commitment(requestId, transactionHash, authenticator));
-      }
-
-      // Convert commitments to contract format for submitAndCreateBatchWithNumber
-      const contractRequests = commitments.map(commitment => ({
-        requestID: commitment.requestID,
-        payload: commitment.payload,
-        authenticator: commitment.authenticator
-      }));
-
-      const batchNum = typeof explicitBatchNumber === 'string' ? BigInt(explicitBatchNumber) : explicitBatchNumber;
-      
-      // Submit with explicit batch number
-      return await this.executeTransaction('submitAndCreateBatchWithNumber', [contractRequests, batchNum]);
-    } catch (error: any) {
-      return {
-        success: false,
-        error: new Error(`Error submitting batch with explicit number: ${error.message}`),
-        message: 'Failed to process the submitted batch',
-      };
-    }
-  }
-  
-  /**
-   * Get inclusion proof for a request
-   * Compatible with the aggregators_net interface
-   * @param requestId The request ID to get proof for
-   * @returns Inclusion proof or null if not found
-   */
-  public async getInclusionProof(requestId: string): Promise<any> {
-    try {
-      // Convert to internal request ID
-      const reqId = await RequestId.create(requestId);
-      
-      // Check if request exists in our records
-      const record = await this.getCommitmentRecord(reqId);
-      if (!record) {
-        return null;
-      }
-
-      // Get Merkle path for this request ID
-      const merkleProof = await this.generateMerkleProof(record.batchNumber, reqId.toString());
-      if (!merkleProof) {
-        return null;
-      }
-
-      // Create and return an InclusionProof
-      const inclusionProof = new InclusionProof(
-        merkleProof.proof,
-        record.authenticator,
-        record.transactionHash
-      );
-
-      return inclusionProof.toDto();
-    } catch (error) {
-      console.error('Error getting inclusion proof:', error);
-      return null;
-    }
-  }
-
-  /**
-   * Get no deletion proof
-   * Compatible with the aggregators_net interface
-   * @returns Proof that no commitments have been deleted
-   */
-  public async getNoDeleteProof(): Promise<any> {
-    // This is a placeholder - would need to be implemented according to your specific requirements
-    throw new Error('Not implemented.');
-  }
-
-  /**
-   * Process all pending commitments into a new batch
-   * @returns Transaction result
-   */
-  private async processPendingCommitments(): Promise<TransactionResult> {
-    if (this.pendingCommitments.length === 0) {
-      return {
-        success: false,
-        error: new Error('No pending commitments to process'),
-        message: 'No pending commitments available for processing'
-      };
-    }
-
-    try {
-      // Get the next batch number
-      const nextBatchNumber = await this.getNextBatchNumber();
-      
-      // Create leaf nodes for the Merkle Tree
-      const leaves: [string, string][] = [];
-
-      // Process all commitments
-      for (const commitment of this.pendingCommitments) {
-        const key = commitment.requestID.toDto();
-        const value = bytesToHex(Buffer.concat([
-          commitment.payload,
-          commitment.authenticator.toBuffer()
-        ]));
-        leaves.push([key, value]);
-      }
-
-      // Create the SMT and get root hash
-      // Initialize SMT with SHA256 algorithm
-      if (!this.smt) {
-        this.smt = await SparseMerkleTree.create(HashAlgorithm.SHA256);
-      } else {
-        // Clear any existing leaves
-        this.smt = await SparseMerkleTree.create(HashAlgorithm.SHA256);
-      }
-      
-      // Add leaves to the SMT
-      for (const [key, value] of leaves) {
-        await this.smt.addLeaf(BigInt(`0x${key}`), Buffer.from(value, 'hex'));
-      }
-      
-      // The rootHash is likely a DataHash object from @unicitylabs/commons
-      // It should have a toString() method or a toBuffer() method
-      // Handle various possible formats
-      let rootHash: string;
-      
-      if (Buffer.isBuffer(this.smt.rootHash)) {
-        // If it's already a Buffer
-        rootHash = this.smt.rootHash.toString('hex');
-      } else if (this.smt.rootHash && typeof this.smt.rootHash.toString === 'function') {
-        // If it has a toString method (DataHash likely has this)
-        rootHash = this.smt.rootHash.toString();
-      } else if (this.smt.rootHash && 'data' in this.smt.rootHash) {
-        // If it has a data property (likely DataHash from unicitylabs)
-        const dataBuffer = (this.smt.rootHash as any).data;
-        rootHash = Buffer.isBuffer(dataBuffer) ? dataBuffer.toString('hex') : String(dataBuffer);
-      } else {
-        // Fallback for other cases
-        rootHash = String(this.smt.rootHash);
-      }
-      
-      // Create request IDs array
-      const requestIds = this.pendingCommitments.map(commitment => 
-        commitment.requestID);
-      
-      // Submit the batch to the blockchain using direct method calls
-      // First, create a batch normally
-      const createBatchResult = await this.executeTransaction('createBatch', []);
-      
-      if (!createBatchResult.success) {
-        return createBatchResult;
-      }
-      
-      // Then submit the hashroot for this batch
-      const result = await this.executeTransaction('submitHashroot', [
-        nextBatchNumber, 
-        Buffer.from(rootHash, 'hex')
-      ]);
-
-      // Clear pending commitments if successful
-      if (result.success) {
-        this.pendingCommitments = [];
+      // First check if this batch has already been processed by this instance
+      if (this.processedBatches.has(batchNumber)) {
         return {
-          ...result,
-          batchNumber: nextBatchNumber,
-          successCount: BigInt(requestIds.length),
-          message: `Successfully created batch ${nextBatchNumber} with ${requestIds.length} commitments`
+          success: false,
+          error: new Error(`Batch ${batchNumber} is already processed by this instance`),
+          skipped: true
+        };
+      }
+      
+      // Check if the batch is already processed on-chain
+      const batchInfo = await this.getBatch(batchNumber);
+      if (batchInfo.processed) {
+        console.log(`Batch ${batchNumber} is already processed on-chain. Verifying locally...`);
+        return this.verifyProcessedBatch(batchNumber, batchInfo);
+      }
+      
+      // Check if we can process this batch (must be the next one after the latest processed)
+      const latestProcessed = await this.getLatestProcessedBatchNumber();
+      if (batchNumber > latestProcessed + BigInt(1)) {
+        return {
+          success: false,
+          error: new Error(
+            `Batch ${batchNumber} cannot be processed yet. Current processed batch: ${latestProcessed}`,
+          ),
         };
       }
 
-      return {
-        ...result,
-        message: `Failed to create batch: ${result.error?.message}`
-      };
+      // Get the batch data to get the requests
+      const { requests } = batchInfo;
+
+      // Create the SMT if it doesn't exist yet
+      if (!this.smt) {
+        console.log(`Creating new SMT instance for the first time`);
+        this.smt = await SparseMerkleTree.create(HashAlgorithm.SHA256);
+        console.log(`SMT created successfully`);
+      }
+      
+      // Add each request to the SMT
+      let addedCount = 0;
+      let skippedCount = 0;
+      
+      for (const request of requests) {
+        // Get the requestId as string for tracking
+        const requestIdStr = request.requestID.toDto();
+        
+        // Skip already processed requests
+        if (this.processedRequestIds.has(requestIdStr)) {
+          console.log(`Skipping already processed request ${requestIdStr}`);
+          skippedCount++;
+          continue;
+        }
+        
+        // Create DataHash from the transaction hash
+        const txDataHash = request.payload;
+        
+        // Create a Transaction object that handles the leaf value computation
+        const transaction = await Transaction.create(request.authenticator, txDataHash);
+        
+        console.log(`Created transaction with leaf value for request ${requestIdStr}`);
+        
+        // Add the leaf to the SMT using BigInt from RequestId
+        await this.smt.addLeaf(request.requestID.toBigInt(), transaction.leafValue.imprint);
+        
+        // Mark as processed using string representation for tracking
+        this.processedRequestIds.add(requestIdStr);
+        
+        // Store the original request data for inclusion proof generation
+        this.requestDataMap.set(requestIdStr, {
+          authenticator: request.authenticator,
+          transactionHash: txDataHash
+        });
+        
+        addedCount++;
+        
+        console.log(`Added leaf for request ${requestIdStr}`);
+      }
+      
+      console.log(`Processed ${requests.length} requests: ${addedCount} added, ${skippedCount} skipped`);
+      console.log(`Total unique requests in SMT: ${this.processedRequestIds.size}`);
+      
+      // Get the root hash
+      const rootHashData = this.smt.rootHash;
+      console.log(`Generated hashroot with ${rootHashData.length} bytes`);
+
+      // Submit the hashroot
+      const result = await this.submitHashroot(batchNumber, rootHashData);
+      
+      // If successful, add to processed batches to avoid duplicate processing
+      if (result.success) {
+        this.processedBatches.add(batchNumber);
+        console.log(`Batch ${batchNumber} processed successfully and added to processed list`);
+      }
+      
+      return result;
     } catch (error: any) {
       return {
         success: false,
-        error: new Error(`Error processing commitments: ${error.message}`),
-        message: 'Failed to process pending commitments'
+        error: new Error(`Error processing batch: ${error.message}`),
       };
     }
   }
 
   /**
-   * Start automatic batch creation
+   * Verify a batch that has already been processed on-chain
+   * Compares our calculated hashroot with what's recorded on-chain
+   * @param batchNumber The batch number to verify
+   * @param batchInfo The batch information
+   * @returns Transaction result
    */
-  public startAutoBatchCreation(): void {
-    if (this.batchCreationTimer) {
-      clearInterval(this.batchCreationTimer);
+  protected async verifyProcessedBatch(
+    batchNumber: bigint,
+    batchInfo: { processed: boolean; hashroot?: string; requests: Array<any> }
+  ): Promise<TransactionResult> {
+    // If already processed locally, no need to verify again
+    if (this.processedBatches.has(batchNumber)) {
+      return {
+        success: false,
+        error: new Error(`Batch ${batchNumber} is already processed`),
+      };
+    }
+    
+    // If no hashroot, we can't verify
+    if (!batchInfo.hashroot) {
+      console.warn(`Batch ${batchNumber} is marked as processed but has no hashroot`);
+      this.processedBatches.add(batchNumber);
+      return {
+        success: false,
+        error: new Error(`Batch ${batchNumber} has no hashroot to verify`),
+      };
+    }
+    
+    // Calculate the hashroot locally and compare
+    try {
+      const localHashroot = await this.calculateHashroot(batchInfo.requests);
+      const onChainHashroot = new DataHash(Buffer.from(batchInfo.hashroot.replace(/^0x/, ''), 'hex'));
+      
+      // Use the consensus verification function
+      const consensusResult = await this.verifyHashrootConsensus(
+        batchNumber, 
+        localHashroot, 
+        onChainHashroot
+      );
+      
+      if (consensusResult.success) {
+        console.log(`Hashroot verification successful for batch ${batchNumber}`);
+        this.processedBatches.add(batchNumber);
+        return {
+          success: true,
+          message: `Batch ${batchNumber} hashroot verified successfully`,
+          verified: true
+        };
+      } else {
+        // Propagate critical failures
+        if (consensusResult.critical) {
+          return {
+            success: false,
+            error: consensusResult.error,
+            message: consensusResult.error?.message || 'Hashroot consensus verification failed',
+            critical: true
+          };
+        }
+        
+        // For non-critical failures (like not enough votes yet), don't mark as processed
+        return {
+          success: false,
+          error: consensusResult.error,
+          message: consensusResult.error?.message || 'Hashroot consensus verification failed'
+        };
+      }
+    } catch (error) {
+      console.error(`Error verifying batch ${batchNumber}:`, error);
+      // Only mark as processed for non-critical errors
+      if (!(error instanceof Error && error.message.includes('CRITICAL'))) {
+        this.processedBatches.add(batchNumber);
+      }
+      return {
+        success: false,
+        error: error instanceof Error ? error : new Error(String(error)),
+        message: `Error verifying batch ${batchNumber}`
+      };
+    }
+  }
+
+  /**
+   * Process all unprocessed batches
+   * @returns Array of transaction results
+   */
+  public async processAllUnprocessedBatches(): Promise<TransactionResult[]> {
+    const latestBatchNumber = await this.getLatestBatchNumber();
+    const latestProcessedBatchNumber = await this.getLatestProcessedBatchNumber();
+    
+    console.log(`Processing all unprocessed batches from ${latestProcessedBatchNumber + 1n} to ${latestBatchNumber}`);
+    
+    const results: TransactionResult[] = [];
+    
+    // Process batches sequentially without skipping
+    let nextBatchToProcess = latestProcessedBatchNumber + 1n;
+    
+    while (nextBatchToProcess <= latestBatchNumber) {
+      console.log(`Checking batch ${nextBatchToProcess}...`);
+      
+      // Skip batches that have already been processed by this instance
+      if (this.processedBatches.has(nextBatchToProcess)) {
+        console.log(`Skipping batch ${nextBatchToProcess} as it was already processed by this instance`);
+        // Add a result to indicate this batch was skipped but previously processed
+        results.push({
+          success: true, // Count as success since we processed it before
+          message: `Batch ${nextBatchToProcess} already processed by this instance`,
+          skipped: true
+        });
+        nextBatchToProcess++; // Move to next batch
+        continue;
+      }
+      
+      // First check if the batch exists before trying to process it
+      let batchExists = true;
+      try {
+        // Try to get the batch - this will throw if it doesn't exist
+        await this.getBatch(nextBatchToProcess);
+      } catch (error) {
+        // If we get "Batch does not exist" error, mark it and stop
+        if (error instanceof Error && error.message.includes("Batch does not exist")) {
+          console.log(`Batch ${nextBatchToProcess} does not exist (gap). Stopping batch processing.`);
+          results.push({
+            success: false,
+            error: error,
+            message: `Batch ${nextBatchToProcess} does not exist (gap detected)` 
+          });
+          return results; // Stop processing on first gap
+        }
+        batchExists = false;
+      }
+      
+      // Only try to process if the batch exists
+      if (batchExists) {
+        try {
+          console.log(`Processing batch ${nextBatchToProcess}...`);
+          const result = await this.processBatch(nextBatchToProcess);
+          results.push(result);
+          
+          if (!result.success) {
+            console.log(`Note: Batch ${nextBatchToProcess} processing was not successful: ${result.error?.message}`);
+            // Stop at first failure - we can't continue past a failed batch
+            return results;
+          }
+        } catch (error) {
+          console.error(`Error processing batch ${nextBatchToProcess}:`, error);
+          // Stop at first error - we can't continue past a failed batch
+          results.push({
+            success: false,
+            error: error instanceof Error ? error : new Error(String(error)),
+            message: `Failed to process batch ${nextBatchToProcess}`
+          });
+          return results;
+        }
+      }
+      
+      // Move to next batch number
+      nextBatchToProcess++;
+    }
+    
+    return results;
+  }
+
+  /**
+   * Start automatic batch processing
+   */
+  public startAutoBatchProcessing(): void {
+    if (this.batchProcessingTimer) {
+      clearInterval(this.batchProcessingTimer);
     }
 
-    this.batchCreationTimer = setInterval(async () => {
+    // Process batches when the timer fires
+    this.batchProcessingTimer = setInterval(async () => {
       try {
-        if (this.pendingCommitments.length > 0) {
-          console.log(`Processing ${this.pendingCommitments.length} pending commitments...`);
-          await this.processPendingCommitments();
+        console.log(`[AutoProcess] Checking for unprocessed batches at ${new Date().toISOString()}`);
+        const results = await this.processAllUnprocessedBatches();
+        
+        if (results.length > 0) {
+          const successCount = results.filter(r => r.success).length;
+          console.log(`[AutoProcess] Processed ${results.length} batches, ${successCount} successful`);
+        } else {
+          console.log('[AutoProcess] No unprocessed batches available');
         }
       } catch (error) {
-        console.error('Error in auto batch creation:', error);
+        console.error('[AutoProcess] Error in auto batch processing:', error);
       }
-    }, this.batchCreationInterval);
+    }, this.batchProcessingInterval);
+
+    // Also listen for new batch created events to process them
+    this.on(EventType.BatchCreated, async (_, data: { batchNumber: bigint }) => {
+      try {
+        // Skip if already processed by this instance
+        if (this.processedBatches.has(data.batchNumber)) {
+          console.log(`[BatchCreated] Batch ${data.batchNumber} already processed by this instance, skipping`);
+          return;
+        }
+        
+        const latestProcessed = await this.getLatestProcessedBatchNumber();
+
+        // Check if this is the next batch to process
+        if (data.batchNumber === latestProcessed + BigInt(1)) {
+          console.log(`[BatchCreated] New batch ${data.batchNumber} created. Processing...`);
+          await this.processBatch(data.batchNumber);
+        } else {
+          console.log(
+            `[BatchCreated] New batch ${data.batchNumber} created, but not next in sequence. Current processed: ${latestProcessed}`,
+          );
+        }
+      } catch (error) {
+        console.error('[BatchCreated] Error in event-triggered batch processing:', error);
+      }
+    });
   }
 
   /**
-   * Stop automatic batch creation
+   * Stop automatic batch processing
    */
-  public stopAutoBatchCreation(): void {
-    if (this.batchCreationTimer) {
-      clearInterval(this.batchCreationTimer);
-      this.batchCreationTimer = undefined;
+  public stopAutoBatchProcessing(): void {
+    if (this.batchProcessingTimer) {
+      clearInterval(this.batchProcessingTimer);
+      this.batchProcessingTimer = undefined;
     }
   }
 
   /**
-   * Get the next batch number
-   * @returns Next batch number
+   * Calculate hashroot for a set of requests
+   * Used for validation during sync
+   * @param requests The requests to calculate hashroot for
+   * @returns The calculated hashroot
    */
-  private async getNextBatchNumber(): Promise<bigint> {
+  protected async calculateHashroot(requests: Array<any>): Promise<DataHash> {
+    console.log(`[Hashroot] Calculating hashroot for ${requests.length} requests`);
+    
+    // Create the SMT if it doesn't exist yet
+    if (!this.smt) {
+      console.log(`[Hashroot] Creating new SMT instance for the first time`);
+      this.smt = await SparseMerkleTree.create(HashAlgorithm.SHA256);
+      console.log(`[Hashroot] SMT created successfully`);
+    } else {
+      // Clear any existing leaves for a fresh calculation
+      this.smt = await SparseMerkleTree.create(HashAlgorithm.SHA256);
+    }
+    
+    // Add all commitments as leaves
+    for (const request of requests) {
+      // Get the requestId as string for tracking
+      const requestIdStr = request.requestID.toDto();
+      
+      // Create DataHash from the transaction hash
+      const txDataHash = request.payload;
+      
+      // Create a Transaction object that handles the leaf value computation
+      const transaction = await Transaction.create(request.authenticator, txDataHash);
+      
+      // Log leaf data for debugging
+      console.log(`[Hashroot] Adding leaf for requestId ${requestIdStr}...`);
+      
+      // Add the leaf to the SMT using BigInt from RequestId
+      await this.smt.addLeaf(request.requestID.toBigInt(), transaction.leafValue.imprint);
+      
+      // Store the data for inclusion proofs
+      this.processedRequestIds.add(requestIdStr);
+      this.requestDataMap.set(requestIdStr, {
+        authenticator: request.authenticator,
+        transactionHash: txDataHash
+      });
+    }
+    
+    // Get the root hash
+    const rootHashData = this.smt.rootHash;
+    console.log(`[Hashroot] Generated hashroot: ${rootHashData}`);
+    
+    return rootHashData;
+  }
+
+  /**
+   * Verify hashroot consensus for a batch
+   * @param batchNumber The batch number
+   * @param localHashroot Our locally calculated hashroot
+   * @param onChainHashroot Hashroot from the blockchain
+   * @returns Result of consensus verification
+   */
+  protected async verifyHashrootConsensus(
+    batchNumber: bigint, 
+    localHashroot: DataHash,
+    onChainHashroot: DataHash
+  ): Promise<{success: boolean; error?: Error; critical?: boolean; waitForConsensus?: boolean; testOverride?: boolean}> {
+    // Convert to hex string for comparison
+    const localHashrootHex = localHashroot.toDto();
+    
+    // Standardize the on-chain value in case of format differences
+    const normalizedOnChainHashroot = onChainHashroot.toDto();
+    
+    console.log(`[Consensus] Comparing hashrooots for batch ${batchNumber}:`);
+    console.log(`[Consensus] Local calculated: ${localHashrootHex}`);
+    console.log(`[Consensus] On-chain value: ${normalizedOnChainHashroot}`);
+    
+    // Check if our hashroot matches the on-chain value (checking both with and without 0x prefix)
+    if (localHashrootHex !== normalizedOnChainHashroot && 
+        localHashrootHex.replace('0x', '') !== normalizedOnChainHashroot.replace('0x', '')) {
+      
+      // CRITICAL SECURITY ALERT - Data integrity failure
+      console.error(`[Sync] CRITICAL SECURITY FAILURE: Hashroot mismatch detected for batch ${batchNumber}:`);
+      console.error(`[Sync] Local calculated: ${localHashrootHex}`);
+      console.error(`[Sync] On-chain value:   ${normalizedOnChainHashroot}`);
+      console.error(`[Sync] This represents a serious data integrity breach or SMT consistency failure!`);
+      
+      // Create a consistent error message for test detection
+      const errorMessage = `CRITICAL INTEGRITY FAILURE: Hashroot mismatch detected for batch ${batchNumber}`;
+      console.error(`[Sync] ${errorMessage}`);
+      
+      // Create the error object with a property to make detection easier
+      const error = new Error(errorMessage);
+      (error as any).criticalHashrootMismatch = true;
+      
+      // This is a critical system failure that requires immediate termination
+      // Do not continue processing under any circumstances as it would corrupt the SMT
+      if (process.env.NODE_ENV !== 'test') {
+        console.error(`[Sync] CRITICAL SYSTEM INTEGRITY FAILURE: Exiting process to prevent data corruption`);
+        process.exit(1); // Exit with non-zero code to signal error
+      } else {
+        console.error(`[Sync] Would exit immediately in production mode. Continuing only because in test mode.`);
+        
+        // In test mode, check if this is a test mismatch that should be accepted
+        if (process.env.ALLOW_TEST_MISMATCH === 'true') {
+          console.log(`[Consensus] WARNING: Accepting mismatched hashroot for testing purposes - DEVELOPMENT MODE ONLY`);
+          // Still return an error object but with a testOverride flag to allow tests to check proper handling
+          return { 
+            success: false, 
+            error: error,
+            critical: true,
+            testOverride: true // Flag that test override was used
+          };
+        }
+      }
+      
+      // Always return error by default (important for security!)
+      return {
+        success: false, 
+        error: error,
+        critical: true
+      };
+    }
+    
+    // If we get here, the hashroots match
+    return { success: true };
+  }
+
+  /**
+   * Submit a hashroot for a batch
+   * @param batchNumber The batch number
+   * @param hashroot The hashroot to submit
+   * @returns Transaction result
+   */
+  public async submitHashroot(
+    batchNumber: bigint,
+    hashroot: DataHash,
+  ): Promise<TransactionResult> {
+    const bn = batchNumber;
+    
+    console.log(`[HashRoot] Submitting hashroot for batch ${bn}`);
+    console.log(`[HashRoot] Hashroot value: ${hashroot.toDto()}`);
+    
+    // Extract the hashroot data properly for the contract
+    let hashrootData: Uint8Array;
+    if (typeof hashroot.imprint === 'function') {
+      hashrootData = hashroot.imprint();
+    } else {
+      hashrootData = hashroot.imprint;
+    }
+    
+    // The executeTransaction method handles the transaction
+    return this.executeTransaction('submitHashroot', [bn, hashrootData]);
+  }
+
+  /**
+   * Synchronize with on-chain state by processing all batches that have been 
+   * processed on-chain but not by this instance
+   */
+  protected async syncWithOnChainState(): Promise<void> {
     try {
-      const latestBatch = await this.getLatestBatchNumber();
-      return latestBatch + BigInt(1);
+      console.log('[Sync] Starting synchronization with on-chain state');
+      const startTime = Date.now();
+      
+      // Get the latest batch numbers
+      const latestBatchNumber = await this.getLatestBatchNumber();
+      const latestProcessedBatchNumber = await this.getLatestProcessedBatchNumber();
+      
+      if (latestBatchNumber === 0n) {
+        console.log('[Sync] No batches found on-chain, nothing to synchronize');
+        return;
+      }
+      
+      console.log(`[Sync] Found ${latestBatchNumber} batches on-chain, ${latestProcessedBatchNumber} processed`);
+      
+      // Process all batches from 1 to latestProcessedBatchNumber
+      // These are already processed on-chain, but we need to calculate hashroots locally
+      // to maintain consistency
+      let syncedBatchCount = 0;
+      
+      for (let i = 1n; i <= latestProcessedBatchNumber; i++) {
+        // Skip if already processed by this instance
+        if (this.processedBatches.has(i)) {
+          console.log(`Already processed batch ${i}, skipping... `);
+          continue;
+        }
+        
+        try {
+          console.log(`[Sync] Syncing to already processed batch ${i} to verify hashroot`);
+          const batch = await this.getBatch(i);
+          
+          if (!batch.processed || !batch.hashroot) {
+            throw new Error(`[Sync] Batch ${i} is marked as processed on-chain but has no hashroot, critical integrity failure`);
+          }
+          
+          // Calculate the hashroot locally
+          const localHashroot = await this.calculateHashroot(batch.requests);
+          
+          // Compare with on-chain hashroot
+          const onChainHashroot = new DataHash(Buffer.from(batch.hashroot.replace(/^0x/, ''), 'hex'));
+          
+          // Verify consensus
+          const consensusResult = await this.verifyHashrootConsensus(i, localHashroot, onChainHashroot);
+          
+          if (consensusResult.success) {
+            console.log(`[Sync] Batch ${i} hashroot verified successfully`);
+            // Add to processed batches since we've verified it
+            this.processedBatches.add(i);
+            syncedBatchCount++;
+          } else if (consensusResult.critical) {
+            // Critical error - this is handled in verifyHashrootConsensus
+            throw consensusResult.error || new Error('Critical hashroot mismatch');
+          }
+        } catch (error) {
+          console.error(`[Sync] Error processing batch ${i}:`, error);
+          
+          // Check if this is a critical error
+          if (error instanceof Error && 
+              (error.message.includes('CRITICAL') || 
+               error.message.includes('integrity'))) {
+            throw error; // Re-throw critical errors
+          }
+          
+          // Continue with next batch for non-critical errors
+        }
+      }
+      
+      const elapsedTime = Date.now() - startTime;
+      console.log(`[Sync] Synchronized ${syncedBatchCount} batches in ${elapsedTime}ms`);
     } catch (error) {
-      console.error('Error getting next batch number:', error);
+      console.error('[Sync] Error synchronizing with on-chain state:', error);
       throw error;
     }
   }
 
   /**
-   * Create a new batch on the blockchain
-   * @param batchNumber Batch number
-   * @param requestIds Request IDs in the batch
-   * @param hashroot Root hash of the SMT
-   * @returns Transaction result
+   * Get an inclusion proof for a specific request ID
+   * @param requestId The request ID to get proof for
+   * @returns The inclusion proof or null if not found
    */
-  private async createBatch(
-    batchNumber: bigint,
-    requestIds: bigint[],
-    hashroot: Uint8Array
-  ): Promise<TransactionResult> {
-    try {
-      // Use an existing method in the contract that supports batch creation with hashroots
-      // If no such method exists, we'll need to modify the contract to support this
-      
-      // This is a specialized method so we may need to get creative
-      // For now, let's try createBatch and submitHashroot separately
-      const createBatchResult = await this.executeTransaction('createBatch', []);
-      
-      if (createBatchResult.success) {
-        // Now submit the hashroot for this batch using a proper method call
-        const submitHashrootResult = await this.executeTransaction('submitHashroot', [batchNumber, hashroot]);
-        
-        return {
-          ...submitHashrootResult,
-          batchNumber: batchNumber
-        };
-      }
-      
-      return createBatchResult;
-    } catch (error) {
-      console.error('Error creating batch with hashroot:', error);
-      return {
-        success: false,
-        error: new Error(`Failed to create batch with hashroot: ${error}`),
-        message: 'Failed to create batch with custom hashroot'
-      };
+  public async getInclusionProof(requestId: RequestId | string): Promise<any> {
+    let requestIdObj: RequestId;
+    
+    // Convert string to RequestId if needed
+    if (typeof requestId === 'string') {
+      requestIdObj = await RequestId.create(requestId);
+    } else {
+      requestIdObj = requestId;
     }
-  }
-
-  /**
-   * Generate Merkle proof for a specific commitment
-   * @param batchNumber The batch number
-   * @param requestID The request ID
-   * @returns Merkle proof or null if not found
-   */
-  private async generateMerkleProof(
-    batchNumber: bigint | string,
-    requestID: string
-  ): Promise<{ proof: string[]; value: string } | null> {
+    
+    const requestIdStr = requestIdObj.toDto();
+    console.log(`Getting inclusion proof for requestId ${requestIdStr}`);
+    
+    // Check if we have an SMT initialized
+    if (!this.smt) {
+      console.error(`No SMT initialized yet, cannot generate proof`);
+      return null;
+    }
+    
     try {
-      const bn = typeof batchNumber === 'string' ? BigInt(batchNumber) : batchNumber;
+      // Generate the proof using the SMT's getPath method with BigInt from RequestId
+      // This will return a proper Merkle path whether the leaf exists or not
+      const proof = this.smt.getPath(requestIdObj.toBigInt());
       
-      // Get the batch data
-      const batch = await this.getBatch(bn);
-      if (!batch || !batch.processed) {
-        return null;
-      }
-
-      // Check if the request is in this batch
-      if (!batch.requests.some(req => req.requestID === requestID)) {
-        return null;
-      }
-
-      // Rebuild the SMT from the batch data
-      // This would need to be implemented based on how you store batch data
-      // For now, we'll use a simplified approach of fetching all commitment records
-
-      const leaves: [string, string][] = [];
-      for (const req of batch.requests) {
-        const reqId = req.requestID;
-        const record = await this.getCommitmentRecord({ toString: () => reqId } as RequestId);
-        if (record) {
-          const key = reqId.toString();
-          const value = bytesToHex(Buffer.concat([
-            record.transactionHash.toBuffer(),
-            record.authenticator.toBuffer()
-          ]));
-          leaves.push([key, value]);
-        }
-      }
-
-      // Create the SMT
-      if (!this.smt) {
-        this.smt = await SparseMerkleTree.create(HashAlgorithm.SHA256);
+      // Determine if this is a positive or negative inclusion proof
+      const isPositiveProof = this.processedRequestIds.has(requestIdStr);
+      console.log(`Generated ${isPositiveProof ? 'positive' : 'negative'} inclusion proof with ${proof.steps.length} steps`);
+      
+      // Get the original request data (if available)
+      const originalData = this.requestDataMap.get(requestIdStr);
+      
+      if (originalData) {
+        console.log(`Found original data for requestId ${requestIdStr}`);
+        // Attach the original data to the proof object
+        proof.leafData = originalData;
       } else {
-        // Clear any existing leaves
-        this.smt = await SparseMerkleTree.create(HashAlgorithm.SHA256);
+        console.log(`No original data found for requestId ${requestIdStr}`);
       }
       
-      // Add leaves to the SMT
-      for (const [key, value] of leaves) {
-        await this.smt.addLeaf(BigInt(`0x${key}`), Buffer.from(value, 'hex'));
-      }
-      
-      // For the unicitylabs SparseMerkleTree implementation
-      // We need to check if the request ID is in the tree by other means
-      const requestBigInt = BigInt(`0x${requestID}`);
-      
-      // Attempt to get the path - if there's no leaf, this should still provide
-      // a path to where the leaf would be if it existed
-      try {
-        // Generate the proof - MerkleTreePath has a steps property
-        const merkleTreePath = this.smt.getPath(requestBigInt);
-        
-        // Convert path steps to hex strings
-        const proof = [];
-        if (merkleTreePath.steps) {
-          for (const step of merkleTreePath.steps) {
-            if (step && step.sibling) {
-              proof.push(step.sibling.toString());
-            } else if (step) {
-              proof.push('0x0000');
-            }
-          }
-        }
-        const value = leaves.find(leaf => leaf[0] === requestID)?.[1] || '';
-
-        return { proof, value };
-      } catch (error) {
-        console.error('Error in proof generation:', error);
-        return null;
-      }
+      return proof;
     } catch (error) {
-      console.error('Error generating Merkle proof:', error);
+      console.error(`Error generating inclusion proof for requestId:`, error);
       return null;
-    }
-  }
-
-  /**
-   * Get a commitment record by request ID
-   * This would need to be implemented based on your storage mechanism
-   * @param requestId Request ID to look up
-   * @returns Commitment record or null if not found
-   */
-  private async getCommitmentRecord(requestId: RequestId): Promise<any> {
-    try {
-      // First check our pending commitments
-      const pendingCommitment = this.pendingCommitments.find(c => 
-        c.requestID.toDto() === requestId.toDto());
-      
-      if (pendingCommitment) {
-        // This is a pending commitment - get its batch info from storage
-        return {
-          batchNumber: BigInt(0), // A placeholder for pending commitments
-          transactionHash: pendingCommitment.payload,
-          authenticator: pendingCommitment.authenticator
-        };
-      }
-      
-      // If not in pending commitments, check on-chain
-      // Call contract method to get commitment record
-      // This is a simplified example - you'll need to implement based on your contract
-      
-      // Call contract to get the batch number for this request ID
-      const batchNumber = await this.contract.getRequestBatch(requestId);
-      
-      if (batchNumber === BigInt(0)) {
-        // Request not found
-        return null;
-      }
-      
-      // Get the batch data to get the commitment
-      const batch = await this.getBatch(batchNumber);
-      
-      if (!batch) {
-        return null;
-      }
-      
-      // At this point, in a real implementation, you would fetch the
-      // commitment details using the batch data, but this depends on
-      // how your contract stores commitment data
-      
-      // For simplicity, we'll return a mock record
-      return {
-        batchNumber,
-        transactionHash: new DataHash(crypto.randomBytes(32)),
-        authenticator: new Authenticator(
-          crypto.randomBytes(32),
-          crypto.randomBytes(32),
-          crypto.randomBytes(65)
-        )
-      };
-    } catch (error) {
-      console.error('Error getting commitment record:', error);
-      return null;
-    }
-  }
-
-  /**
-   * Validate a commitment
-   * @param requestId Request ID
-   * @param transactionHash Transaction hash
-   * @param authenticator Authenticator
-   * @returns Validation status
-   */
-  private async validateCommitment(
-    requestId: RequestId, 
-    transactionHash: DataHash, 
-    authenticator: Authenticator
-  ): Promise<SubmitCommitmentStatus> {
-    try {
-      // Check if request ID is correctly derived from authenticator
-      const expectedRequestId = await RequestId.create(
-        authenticator.publicKey,
-        authenticator.stateHash
-      );
-      
-      if (expectedRequestId.toDto() !== requestId.toDto()) {
-        return SubmitCommitmentStatus.REQUEST_ID_MISMATCH;
-      }
-      
-      // Verify authenticator signature
-      if (!(await authenticator.verify(transactionHash))) {
-        return SubmitCommitmentStatus.AUTHENTICATOR_VERIFICATION_FAILED;
-      }
-      
-      // Check if request ID already exists with different transaction hash
-      const existingRecord = await this.getCommitmentRecord(requestId);
-      // Compare transaction hashes - if they're different, reject
-      if (existingRecord) {
-        const existingTxHashStr = Buffer.from(existingRecord.transactionHash).toString('hex');
-        const newTxHashStr = Buffer.from(transactionHash).toString('hex');
-        if (existingTxHashStr !== newTxHashStr) {
-          return SubmitCommitmentStatus.REQUEST_ID_EXISTS;
-        }
-      }
-      
-      return SubmitCommitmentStatus.SUCCESS;
-    } catch (error) {
-      console.error('Error validating commitment:', error);
-      return SubmitCommitmentStatus.INVALID_REQUEST;
     }
   }
 
@@ -1193,6 +1050,10 @@ export class AggregatorGateway extends UniCityAnchorClient {
       signer: string; 
     } 
   }): Promise<boolean> {
+    if (!this.authMethod) {
+      return true; // No authentication configured
+    }
+    
     switch (this.authMethod) {
       case AuthMethod.API_KEY:
         return this.authenticateApiKey(authData.apiKey);
@@ -1309,44 +1170,5 @@ export class AggregatorGateway extends UniCityAnchorClient {
       console.error('Signature verification error:', error);
       return false;
     }
-  }
-
-  /**
-   * Legacy method for submitting a commitment (aligned with current AggregatorGatewayClient)
-   * @param requestID The request ID
-   * @param payload The payload data
-   * @param authenticator The authenticator data
-   * @returns Transaction result
-   */
-  public async submitCommitmentLegacy(
-    requestID: bigint | string,
-    payload: Uint8Array | string,
-    authenticator: Uint8Array | string,
-  ): Promise<TransactionResult> {
-    const id = typeof requestID === 'string' ? BigInt(requestID) : requestID;
-
-    // Convert string payloads to Uint8Array if needed
-    const payloadBytes = typeof payload === 'string' 
-      ? new TextEncoder().encode(payload) 
-      : payload;
-
-    const authBytes = typeof authenticator === 'string' 
-      ? new TextEncoder().encode(authenticator) 
-      : authenticator;
-
-    return this.executeTransaction('submitCommitment', [id, payloadBytes, authBytes]);
-  }
-
-  /**
-   * Legacy method for creating a batch (aligned with current AggregatorGatewayClient)
-   * @returns The created batch number and transaction result
-   */
-  public async createBatchLegacy(): Promise<{ batchNumber: bigint; result: TransactionResult }> {
-    const result = await this.executeTransaction('createBatch', []);
-
-    // Get the latest batch number to return
-    const batchNumber = await this.getLatestBatchNumber();
-
-    return { batchNumber, result };
   }
 }
