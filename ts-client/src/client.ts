@@ -22,7 +22,7 @@ import {
 /**
  * Base client for interacting with the Ethereum Unicity Anchor smart contract
  */
-export class UniCityAnchorClient {
+export class UnicityAnchorClient {
   protected provider: ethers.JsonRpcProvider;
   protected contract: any; // Using any to avoid Contract type issues
   protected signer?: ethers.Wallet;
@@ -35,7 +35,7 @@ export class UniCityAnchorClient {
   private eventListeners: Map<EventType, EventCallback[]> = new Map();
 
   /**
-   * Create a new UnicityCityAnchorClient
+   * Create a new UnicityAnchorClient
    * @param options Client configuration options
    */
   constructor(options: ClientOptions) {
