@@ -253,9 +253,14 @@ async function main() {
 
       // Create commitment data
       const commitment = await createAuthenticatorAndRequestId();
+      console.log(`\n*** COMMITMENT ${commitment.requestId} ***`);
+      console.log(commitment);
 
       // Submit to the gateway
       const submissionResult = await submitCommitment(gatewayUrl, commitment);
+
+      console.log(`\n*** RESPONCE ${commitment.requestId} ***`);
+      console.log(submissionResult);
 
       // Store both the commitment and result
       submissions.push({
@@ -272,7 +277,7 @@ async function main() {
     for (let i = 0; i < submissions.length; i++) {
       const submission = submissions[i];
       const commitment = submission.commitment;
-      console.log(`Checking proof for request ID: ${commitment.requestId.substring(0, 10)}...`);
+      console.log(`Checking proof for request ID: ${commitment.requestId}...`);
 
       // Try up to 10 times with increasing delays
       const maxRetries = 10;
@@ -300,7 +305,10 @@ async function main() {
             submission.result = result;
 
             // Print basic verification summary
-            console.log(`\n✅ Proof found for request ID: ${commitment.requestId.substring(0, 10)}...`);
+            console.log(`\n✅ Proof found for request ID: ${commitment.requestId}...`);
+	    console.log(`\n*** INCLUSION PROOF ${commitment.requestId} ***`);
+    	    console.log(JSON.stringify(result, null, 4));
+
             console.log(`📋 VERIFICATION SUMMARY:`);
 
             try {
@@ -346,7 +354,7 @@ async function main() {
       }
 
       if (!proofFound) {
-        console.log(`❌ No proof found for request ID: ${commitment.requestId.substring(0, 10)}... after ${maxRetries} retries`);
+        console.log(`❌ No proof found for request ID: ${commitment.requestId}... after ${maxRetries} retries`);
       }
     }
 

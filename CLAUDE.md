@@ -89,14 +89,17 @@ Next steps:
   - Node engine: >= 20.0.0, use ethers v6 for blockchain interactions
   - Utility functions should be pure and extensively tested
   - Follow functional programming principles where appropriate
+  - Format: 2 space indentation, 100 chars line length, single quotes, trailing commas
   
 - **Error Handling**:
   - Solidity: Custom errors with descriptive names and parameters
   - TypeScript: Try/catch with specific error types, avoid generic catches
   - Include proper error reporting and logging
+  - Use detailed console logging for important operations
 
 - **Security**: 
   - Follow OpenZeppelin patterns and use their libraries
   - Validate all inputs with require statements or custom errors
   - Include proper access control for all sensitive functions
   - Use multiple aggregator consensus for critical operations
+  - Implement comprehensive validation when handling cryptographic operations
