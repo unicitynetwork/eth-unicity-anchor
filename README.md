@@ -1,4 +1,4 @@
-# Ethereum Unicity Anchor
+# Polygon Unicity Anchor
 
 A decentralized commitment management system that ensures consensus on the state of all submitted state transitions commitment requests through a batch processing mechanism and aggregator voting.
 
@@ -12,7 +12,7 @@ A decentralized commitment management system that ensures consensus on the state
 
 ## Overview
 
-The Ethereum Unicity Anchor provides a trustless framework for processing user commitments with guaranteed consistency across all participants. It enables multiple trusted aggregator services to collect, process, and verify commitment requests in an orderly, immutable manner.
+The Polygon Unicity Anchor provides a trustless framework for processing user commitments with guaranteed consistency across all participants. It enables multiple trusted aggregator services to collect, process, and verify commitment requests in an orderly, immutable manner.
 
 ## Quick Start
 
@@ -100,7 +100,7 @@ The implementation provides:
 
 ## Development
 
-This project uses [Foundry](https://book.getfoundry.sh/) for Ethereum smart contract development.
+This project uses [Foundry](https://book.getfoundry.sh/) for Solidity smart contract development.
 
 ### Prerequisites
 
