@@ -166,6 +166,7 @@ async function getInclusionProof(gateway: string, requestId: string, origRequest
 
       let verificationResult;
       let authVerification;
+      let authMatchesPath;
       let pathVerification;
 
       try {
@@ -178,8 +179,18 @@ async function getInclusionProof(gateway: string, requestId: string, origRequest
           authVerification = await proof.authenticator.verify(proof.transactionHash);
 //	    console.log(" ### DEBUG authVerification: "+authVerification);
         } catch (authError) {
+	  console.error("authError: "+authError);
           authVerification = false;
         }
+	try {
+	    const calculatedRequestId = await proof.authenticator.calculateRequestId();
+	    authMatchesPath = requestIdObj.equals(calculatedRequestId);
+	    console.log("requestIdObj: "+requestIdObj.toDto());
+	    console.log("calculatedRequestId: "+calculatedRequestId.toDto());
+	} catch(authMatchesErr){
+	    console.error("authMatchesErr: "+authMatchesErr);
+	    authMatchesPath=false;
+	}
 
         // Verify the merkle tree path
         try {
@@ -200,6 +211,7 @@ async function getInclusionProof(gateway: string, requestId: string, origRequest
           };
 
         } catch (pathError) {
+	  console.error("pathError: "+pathError);
           // Create a failed pathVerification result
           pathVerification = {
             isPathValid: false,
@@ -210,6 +222,7 @@ async function getInclusionProof(gateway: string, requestId: string, origRequest
         }
 
       } catch (verifyError) {
+	console.error("verifyError: "+verifyError);
         return {
           ...response.data,
           verificationError: verifyError.message,
@@ -221,16 +234,19 @@ async function getInclusionProof(gateway: string, requestId: string, origRequest
         ...response.data,
         fixApplied,
         authVerification,
+	authMatchesPath,
         pathVerification,
       };
     } catch (parseError) {
+      console.error("parseError: "+parseError);
       return {
         ...response.data,
         error: parseError.message
       };
     }
   } catch (error: any) {
-    // 404 means the proof is not yet available - this is normal
+    console.error("Unexpected generic error: "+error);
+    // 404 means the proof is not yet available - this is not normal. We must get non-inclusion proof instead!!!
     if (error.response && error.response.status === 404) {
       return { result: null };
     }
@@ -320,7 +336,7 @@ async function main() {
               const txHashMatches = commitment.transactionHash === result.transactionHash;
 
               // Overall result
-              const overallSuccess = txHashMatches && result.pathVerification.isPathValid && result.pathVerification.isPathIncluded && result.pathVerification.isLeafValueValid && result.authVerification;
+              const overallSuccess = txHashMatches && result.pathVerification.isPathValid && result.pathVerification.isPathIncluded && result.pathVerification.isLeafValueValid && result.authVerification && result.authMatchesPath;
               console.log(`\nOVERALL RESULT: ${overallSuccess ? 'SUCCESS ✅' : 'FAILED ❌'}`);
 
               // Count this as a success for summary
@@ -340,6 +356,8 @@ async function main() {
                   console.error(`- Reason: Transaction hash mismatch`);
                 } else if (!result.authVerification) {
                     console.error(`- Reason: Authenticator verification failed`);
+                } else if (!result.authMatchesPath) {
+                    console.error(`- Reason: Authenticator authenticates wrong requestId`);
                 }
               }
             } catch (error) {
